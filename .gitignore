@@ -1,0 +1,20 @@
+# Virtual environments
+.venv/
+
+# VS Code settings
+.vscode/
+
+# Python cache / bytecode
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Model weight & artifact files
+*.hdf5
+*.json
+*.npz
+
+# macOS / Linux misc
+.DS_Store
