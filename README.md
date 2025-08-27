@@ -51,7 +51,7 @@ It was made as a private school project, to better understand the math process b
 | Losses | Categorical Crossentropy, MSE |
 | Optimizers | SGD (momentum), Adam |
 | Data | Gzip IDX (MNIST) loader, threaded batch prefetch |
-| Training | Manual loop with progress bars, accuracy reporting |
+| Training | Manual loop with progress bars, accuracy reporting, optional early stopping & LR scheduling |
 | Serialization | JSON architecture + HDF5 (if available) or NPZ fallback |
 | Utilities | One-hot encoding, (de)serialization helpers |
 | GUI | Tkinter digit drawing + prediction (`mnist_gui.py`) |
@@ -104,7 +104,11 @@ pip freeze > requirements.txt
 
 ---
 ## 5. Quick Start
-Train the sample CNN on MNIST (ensure gzip files exist in `mnist_dataset/`).
+Train the sample CNN on MNIST (ensure gzip files exist in `mnist_dataset/`). The example now demonstrates:
+* Train/validation split
+* Early stopping (patience & min_delta)
+* Learning rate reduction on plateau (factor, patience, min lr)
+* Weight decay (L2) & gradient clipping (stability late training)
 
 ```bash
 source .venv/bin/activate
@@ -133,8 +137,8 @@ Draw digits (0–9). The model preprocesses (threshold, center, blur) and predic
 ```python
 from nn import Model
 model = Model(layers_list)      # or create empty and call model.add(...)
-model.compile(loss='categorical_crossentropy', optimizer='adam', lr=1e-3)
-model.fit(dataset, epochs=5, batch_size=64, num_classes=10)
+model.compile(loss='categorical_crossentropy', optimizer='adam', lr=1e-3, weight_decay=1e-4, clip_norm=5.0)
+history = model.fit(dataset, epochs=5, batch_size=64, num_classes=10, val_data=(X_val, y_val), early_stopping=True)
 preds = model.predict(X)        # (N, num_classes)
 model.save('my.hdf5')
 loaded = Model.load('my.hdf5')
@@ -166,11 +170,21 @@ Included:
 
 All losses store intermediate forward pass data to compute backward gradient via `loss.backward()`.
 
-### 6.4 Optimizers
+### 6.4 Optimizers & Regularization
+Optimizers:
 * `sgd(lr=0.01, momentum=0.0)`
 * `adam(lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8)`
 
-Call pattern inside training: `optimizer.step(model._params_and_grads())`.
+Regularization / stability hooks configured via `model.compile(...)` when the optimizer supports `configure`:
+* `weight_decay` (float, default 0.0): L2 penalty applied per-parameter: `grad += weight_decay * param`.
+* `clip_norm` (float or None): Global gradient norm clipping prior to parameter update.
+
+Learning Rate Scheduling & Early Stopping (in `model.fit`):
+* `lr_schedule='plateau'`: Monitors validation accuracy (if provided) else training accuracy; if no improvement for `lr_patience` epochs, multiplies learning rate by `lr_factor` (down to `lr_min`).
+* `early_stopping=True`: Stop when metric hasn't improved by at least `min_delta` for `patience` epochs.
+
+History Tracking:
+`fit` returns a dict: `{ 'loss': [...], 'acc': [...], 'val_acc': [...], 'lr': [...] }` for downstream plotting / analysis.
 
 ### 6.5 Data
 `nn.data.load_mnist_gz(path)` → `(train_dataset, test_dataset)`.
@@ -266,7 +280,7 @@ Disable auto thread config: `export NN_DISABLE_AUTO_THREADS=1` before running.
 ---
 ## 13. Roadmap / Ideas
 * Additional layers: AveragePool, GlobalPooling, Residual blocks.
-* Learning rate schedulers & early stopping.
+* Additional learning rate schedulers (cosine, warm restarts) & richer callbacks.
 * Mixed precision (float16) experimental path.
 * More dataset utilities (CIFAR10 parsing).
 * Col2im full vectorization & further Conv2D micro-optimizations.

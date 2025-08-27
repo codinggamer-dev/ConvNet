@@ -56,19 +56,31 @@ class Model:
             outs.append(self.forward(x[i:i+batch_size], training=False))
         return np.concatenate(outs, axis=0)
 
-    def compile(self, loss: str, optimizer: str, **opt_kwargs):
+    def compile(self, loss: str, optimizer: str, weight_decay: float = 0.0, clip_norm: float | None = None, **opt_kwargs):
         self.loss = NAME2LOSS[loss]()
         self.optimizer = NAME2OPT[optimizer](**opt_kwargs)
+        # configure regularization
+        if hasattr(self.optimizer, 'configure'):
+            self.optimizer.configure(weight_decay=weight_decay, clip_norm=clip_norm)
 
-    def fit(self, dataset, epochs: int = 1, batch_size: int = 32, val_data=None, num_threads: Optional[int] = None, one_hot_labels: bool = True, num_classes: Optional[int] = None):
+    def fit(self, dataset, epochs: int = 1, batch_size: int = 32, val_data=None, num_threads: Optional[int] = None, one_hot_labels: bool = True, num_classes: Optional[int] = None,
+            early_stopping: bool = True, patience: int = 10, min_delta: float = 0.0, lr_schedule: str | None = 'plateau', lr_factor: float = 0.5, lr_patience: int = 5, lr_min: float = 1e-6, verbose: bool = True):
         # dataset: object with .images for shape inference & batches() for iteration
         if not self.built:
             inferred_shape = (None,) + dataset.images.shape[1:]
             self.build(inferred_shape)
+        best_metric = -np.inf
+        epochs_no_improve = 0
+        lr_wait = 0
+        history = {'loss': [], 'acc': [], 'val_acc': [], 'lr': []}
         for epoch in range(epochs):
-            pbar = tqdm(dataset.batches(batch_size, shuffle=True, num_threads=num_threads), total=(len(dataset)+batch_size-1)//batch_size, desc=f"Epoch {epoch+1}/{epochs}")
-            losses = []
-            accs = []
+            pbar = tqdm(
+                dataset.batches(batch_size, shuffle=True, num_threads=num_threads),
+                total=(len(dataset) + batch_size - 1) // batch_size,
+                desc=f"Epoch {epoch+1}/{epochs}"
+            )
+            losses: List[float] = []
+            accs: List[float] = []
             for X, y in pbar:
                 if one_hot_labels and (y.ndim == 1) and num_classes is not None:
                     y_true = utils.one_hot(y, num_classes)
@@ -78,22 +90,52 @@ class Model:
                 loss_val = self.loss.forward(logits, y_true)
                 grad = self.loss.backward()
                 self.backward(grad)
-                # optimizer step
                 self.optimizer.step(self._params_and_grads())
                 losses.append(loss_val)
-                # accuracy (classification only)
                 if y.ndim == 1:
                     preds = logits.argmax(axis=1)
                     accs.append((preds == y).mean())
                 pbar.set_postfix(loss=np.mean(losses), acc=np.mean(accs) if accs else 0.0)
+
+            val_acc = None
             if val_data:
                 Xv, yv = val_data
-                preds = self.predict(Xv)
+                preds_val = self.predict(Xv)
                 if yv.ndim == 1:
-                    val_acc = (preds.argmax(axis=1) == yv).mean()
+                    val_acc = (preds_val.argmax(axis=1) == yv).mean()
+                    if verbose:
+                        print(f"Val acc: {val_acc:.4f}")
                 else:
                     val_acc = 0.0
-                print(f"Val acc: {val_acc:.4f}")
+
+            metric = val_acc if val_acc is not None else (np.mean(accs) if accs else -np.inf)
+            history['loss'].append(np.mean(losses))
+            history['acc'].append(np.mean(accs) if accs else 0.0)
+            history['val_acc'].append(val_acc)
+            history['lr'].append(getattr(self.optimizer, 'lr', None))
+
+            if metric is not None and metric > best_metric + min_delta:
+                best_metric = metric
+                epochs_no_improve = 0
+                lr_wait = 0  # reset LR plateau counter on improvement
+            else:
+                epochs_no_improve += 1
+                lr_wait += 1
+
+            if lr_schedule == 'plateau' and lr_wait >= lr_patience:
+                if hasattr(self.optimizer, 'lr') and self.optimizer.lr > lr_min:
+                    old_lr = self.optimizer.lr
+                    self.optimizer.lr = max(lr_min, self.optimizer.lr * lr_factor)
+                    lr_wait = 0
+                    if verbose:
+                        print(f"LR reduced from {old_lr} to {self.optimizer.lr}")
+
+            if early_stopping and epochs_no_improve >= patience:
+                if verbose:
+                    print(f"Early stopping at epoch {epoch+1}. Best metric={best_metric:.4f}")
+                break
+
+        return history
 
     def _params_and_grads(self):
         for layer in self.layers:

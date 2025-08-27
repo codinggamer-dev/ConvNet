@@ -10,34 +10,73 @@ from nn.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense, BatchNorm2D
 from nn import data
 
 
-def build_mnist_cnn(num_classes=10):
+def build_mnist_cnn(num_classes=10, lr=1e-3, weight_decay=1e-4, clip_norm=5.0):
+    """Construct a small CNN with regularization settings baked in."""
     model = Model([
-        Conv2D(8, (3,3)), Activation('relu'),
-        MaxPool2D((2,2)),
-        Conv2D(16, (3,3)), Activation('relu'),
-        MaxPool2D((2,2)),
+        Conv2D(8, (3, 3)), Activation('relu'),
+        MaxPool2D((2, 2)),
+        Conv2D(16, (3, 3)), Activation('relu'),
+        MaxPool2D((2, 2)),
         Flatten(),
         Dense(64), Activation('relu'), Dropout(0.2),
         Dense(num_classes)
     ])
-    model.compile(loss='categorical_crossentropy', optimizer='adam', lr=0.001)
+    # New: weight decay & gradient clipping configured via compile
+    model.compile(
+        loss='categorical_crossentropy',
+        optimizer='adam',
+        lr=lr,
+        weight_decay=weight_decay,
+        clip_norm=clip_norm
+    )
     return model
 
 
 def main():
-    train, test = data.load_mnist_gz('mnist_dataset')
+    # Load full training and test sets
+    train_full, test = data.load_mnist_gz('mnist_dataset')
     num_classes = 10
+
+    # Create a validation split from training data (e.g., last 10%)
+    split_idx = int(0.9 * len(train_full))
+    train = data.Dataset(train_full.images[:split_idx], train_full.labels[:split_idx])
+    val_images = train_full.images[split_idx:]
+    val_labels = train_full.labels[split_idx:]
+    # Normalize validation images (training batches are normalized internally)
+    X_val = val_images.astype(np.float32) / 255.0
+    y_val = val_labels
+
     model = build_mnist_cnn(num_classes)
-    model.fit(train, epochs=10, batch_size=64, num_classes=num_classes)
+
+    # Train with early stopping & learning rate reduction on plateau.
+    history = model.fit(
+        train,
+        epochs=100,
+        batch_size=64,
+        num_classes=num_classes,
+        val_data=(X_val, y_val),
+        early_stopping=True,
+        patience=12,
+        lr_schedule='plateau',
+        lr_factor=0.5,
+        lr_patience=4,
+        verbose=True
+    )
+
     model.summary()
-    # save and load
+
+    # Report best validation accuracy
+    best_val = max([v for v in history['val_acc'] if v is not None])
+    print(f"Best validation accuracy: {best_val:.4f}")
+
+    # Save and reload the model
     model.save('weights.hdf5')
     loaded = Model.load('weights.hdf5')
-    # build with sample input to ensure shapes
-    sample = train.images[:4].astype(np.float32)/255.0
+    # Build with sample input to ensure parameter shapes are realized
+    sample = train.images[:4].astype(np.float32) / 255.0
     loaded.build(sample.shape)
     preds = loaded.predict(sample)
-    print('Preds shape', preds.shape)
+    print('Reloaded prediction batch shape:', preds.shape)
 
 if __name__ == '__main__':
     main()
