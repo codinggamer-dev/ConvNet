@@ -15,6 +15,7 @@ __pycache__/
 *.hdf5
 *.json
 *.npz
+backup-trained/
 
 # macOS / Linux misc
 .DS_Store

@@ -51,12 +51,12 @@ def main():
     # Train with early stopping & learning rate reduction on plateau.
     history = model.fit(
         train,
-        epochs=100,
+        epochs=450,
         batch_size=64,
         num_classes=num_classes,
         val_data=(X_val, y_val),
         early_stopping=True,
-        patience=12,
+        patience=500,
         lr_schedule='plateau',
         lr_factor=0.5,
         lr_patience=4,
