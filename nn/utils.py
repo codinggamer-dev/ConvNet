@@ -1,13 +1,19 @@
 """Utility helpers."""
 from __future__ import annotations
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from .layers import NAME2LAYER
+from . import cuda
+
+# Type alias for arrays that could be NumPy or CuPy
+ArrayLike = Union[np.ndarray, Any]  # Any to avoid cupy import
 
 
-def one_hot(labels: np.ndarray, num_classes: int) -> np.ndarray:
-    y = np.zeros((labels.size, num_classes), dtype=np.float32)
-    y[np.arange(labels.size), labels] = 1
+def one_hot(labels: ArrayLike, num_classes: int) -> ArrayLike:
+    """Convert integer labels to one-hot encoding, supporting both CPU and GPU arrays."""
+    xp = cuda.get_array_module(labels)
+    y = xp.zeros((labels.size, num_classes), dtype=xp.float32)
+    y[xp.arange(labels.size), labels] = 1
     return y
 
 

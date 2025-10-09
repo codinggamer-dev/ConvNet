@@ -1,0 +1,4 @@
+numpy
+tqdm
+h5py
+cupy-cuda12x

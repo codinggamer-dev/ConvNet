@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 from .layers import Layer, NAME2LAYER
 from .losses import NAME2LOSS
 from .optim import NAME2OPT
-from . import io, utils
+from . import io, utils, cuda
 from tqdm import tqdm
 import os
 
@@ -39,6 +39,7 @@ class Model:
         self.built = True
 
     def forward(self, x, training=False):
+        x = cuda.asarray(x)  # Ensure input is on the right device
         for layer in self.layers:
             x = layer.forward(x, training=training)
         return x
@@ -51,10 +52,12 @@ class Model:
     def predict(self, x, batch_size: int = 32):
         if not self.built:
             self.build(x.shape)
+        x = cuda.asarray(x)  # Ensure input is on the right device
+        xp = cuda.get_array_module(x)
         outs = []
         for i in range(0, x.shape[0], batch_size):
             outs.append(self.forward(x[i:i+batch_size], training=False))
-        return np.concatenate(outs, axis=0)
+        return xp.concatenate(outs, axis=0)
 
     def compile(self, loss: str, optimizer: str, weight_decay: float = 0.0, clip_norm: float | None = None, **opt_kwargs):
         self.loss = NAME2LOSS[loss]()
@@ -91,10 +94,12 @@ class Model:
                 grad = self.loss.backward()
                 self.backward(grad)
                 self.optimizer.step(self._params_and_grads())
-                losses.append(loss_val)
+                losses.append(float(cuda.to_cpu(loss_val)))  # Ensure loss is CPU scalar
                 if y.ndim == 1:
-                    preds = logits.argmax(axis=1)
-                    accs.append((preds == y).mean())
+                    xp = cuda.get_array_module(logits)
+                    preds = xp.argmax(logits, axis=1)
+                    acc = float(cuda.to_cpu(xp.mean(preds == y)))  # Convert to CPU scalar
+                    accs.append(acc)
                 pbar.set_postfix(loss=np.mean(losses), acc=np.mean(accs) if accs else 0.0)
 
             val_acc = None
@@ -102,7 +107,9 @@ class Model:
                 Xv, yv = val_data
                 preds_val = self.predict(Xv)
                 if yv.ndim == 1:
-                    val_acc = (preds_val.argmax(axis=1) == yv).mean()
+                    xp = cuda.get_array_module(preds_val)
+                    acc_tensor = xp.mean(xp.argmax(preds_val, axis=1) == yv)
+                    val_acc = float(cuda.to_cpu(acc_tensor))  # Convert to CPU scalar
                     if verbose:
                         print(f"Val acc: {val_acc:.4f}")
                 else:

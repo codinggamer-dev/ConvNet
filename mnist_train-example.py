@@ -2,12 +2,13 @@
 Assumes MNIST .gz files are in ./mnist_dataset.
 
 Auto thread configuration occurs when importing nn (sets BLAS threads to cpu cores).
+GPU acceleration via CuPy is used automatically if available.
 """
 import os
 from nn import Model  # triggers auto thread setup before numpy heavy ops
 import numpy as np
 from nn.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense, BatchNorm2D, Dropout
-from nn import data
+from nn import data, cuda
 
 
 def build_mnist_cnn(num_classes=10, lr=1e-3, weight_decay=1e-4, clip_norm=5.0):
@@ -33,6 +34,20 @@ def build_mnist_cnn(num_classes=10, lr=1e-3, weight_decay=1e-4, clip_norm=5.0):
 
 
 def main():
+    # Display compute device information
+    print("=== Compute Environment ===")
+    print(f"Device: {cuda.get_device_name()}")
+    print(f"CUDA Available: {cuda.CUDA_AVAILABLE}")
+    print(f"Using CUDA: {cuda.USE_CUDA}")
+    if cuda.USE_CUDA:
+        print("🚀 GPU acceleration is active!")
+        print("💡 Consider using larger batch sizes for better GPU utilization")
+    else:
+        print("🖥️  Running on CPU")
+        if not cuda.CUDA_AVAILABLE:
+            print("💡 Install CuPy for GPU acceleration: pip install cupy-cuda11x")
+    print()
+    
     # Load full training and test sets
     train_full, test = data.load_mnist_gz('mnist_dataset')
     num_classes = 10
@@ -45,18 +60,23 @@ def main():
     # Normalize validation images (training batches are normalized internally)
     X_val = val_images.astype(np.float32) / 255.0
     y_val = val_labels
+    
+    # Move validation data to GPU if using CUDA
+    if cuda.USE_CUDA:
+        X_val = cuda.asarray(X_val)
+        y_val = cuda.asarray(y_val)
 
     model = build_mnist_cnn(num_classes)
 
     # Train with early stopping & learning rate reduction on plateau.
     history = model.fit(
         train,
-        epochs=450,
-        batch_size=64,
+        epochs=100,
+        batch_size=256,
         num_classes=num_classes,
         val_data=(X_val, y_val),
         early_stopping=True,
-        patience=500,
+        patience=15,  # More reasonable patience for early stopping
         lr_schedule='plateau',
         lr_factor=0.5,
         lr_patience=4,

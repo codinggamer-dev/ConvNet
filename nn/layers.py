@@ -1,9 +1,10 @@
 """Layer definitions for the nn module.
-Pure NumPy implementations of common layers.
+Pure NumPy implementations of common layers with optional CUDA support.
 """
 from __future__ import annotations
 import numpy as np
 from typing import Optional, Tuple, Dict, Any
+from . import cuda
 
 # Helper weight initializer functions
 
@@ -11,7 +12,8 @@ def glorot_uniform(shape, rng: np.random.Generator):
     fan_in = np.prod(shape[1:]) if len(shape) > 1 else shape[0]
     fan_out = shape[0]
     limit = np.sqrt(6.0 / (fan_in + fan_out))
-    return rng.uniform(-limit, limit, size=shape)
+    weights = rng.uniform(-limit, limit, size=shape)
+    return cuda.asarray(weights)  # Move to GPU if available
 
 class Layer:
     """Abstract layer base class."""
@@ -55,14 +57,15 @@ class Dense(Layer):
         in_features = input_shape[-1]
         self.params['W'] = glorot_uniform((in_features, self.units), self.rng)
         if self.use_bias:
-            self.params['b'] = np.zeros((self.units,), dtype=np.float32)
-        self.grads['W'] = np.zeros_like(self.params['W'])
+            self.params['b'] = cuda.asarray(np.zeros((self.units,), dtype=np.float32))
+        self.grads['W'] = cuda.zeros_like(self.params['W'])
         if self.use_bias:
-            self.grads['b'] = np.zeros_like(self.params['b'])
+            self.grads['b'] = cuda.zeros_like(self.params['b'])
         self.output_shape = (*input_shape[:-1], self.units)
         self.built = True
 
     def forward(self, x, training=False):
+        x = cuda.asarray(x)  # Ensure input is on the right device
         self.last_x = x
         y = x @ self.params['W']
         if self.use_bias:
@@ -71,9 +74,10 @@ class Dense(Layer):
 
     def backward(self, grad):
         x = self.last_x
+        xp = cuda.get_array_module(x)
         self.grads['W'][...] = x.reshape(-1, x.shape[-1]).T @ grad.reshape(-1, grad.shape[-1])
         if self.use_bias:
-            self.grads['b'][...] = grad.sum(axis=tuple(range(len(grad.shape)-1)))
+            self.grads['b'][...] = xp.sum(grad, axis=tuple(range(len(grad.shape)-1)))
         return grad @ self.params['W'].T
 
     def to_config(self):
@@ -111,27 +115,30 @@ class Activation(Layer):
         self.trainable = False
 
     def forward(self, x, training=False):
+        x = cuda.asarray(x)  # Ensure input is on the right device
         self.last_x = x
+        xp = cuda.get_array_module(x)
         if self.func == 'relu':
-            return np.maximum(0, x)
+            return xp.maximum(0, x)
         if self.func == 'sigmoid':
-            return 1 / (1 + np.exp(-x))
+            return 1 / (1 + xp.exp(-x))
         if self.func == 'tanh':
-            return np.tanh(x)
+            return xp.tanh(x)
         if self.func == 'softmax':
-            e = np.exp(x - x.max(axis=-1, keepdims=True))
-            return e / e.sum(axis=-1, keepdims=True)
+            e = xp.exp(x - xp.max(x, axis=-1, keepdims=True))
+            return e / xp.sum(e, axis=-1, keepdims=True)
         raise ValueError(f"Unknown activation {self.func}")
 
     def backward(self, grad):
         x = self.last_x
+        xp = cuda.get_array_module(x)
         if self.func == 'relu':
             return grad * (x > 0)
         if self.func == 'sigmoid':
-            s = 1 / (1 + np.exp(-x))
+            s = 1 / (1 + xp.exp(-x))
             return grad * s * (1 - s)
         if self.func == 'tanh':
-            t = np.tanh(x)
+            t = xp.tanh(x)
             return grad * (1 - t**2)
         if self.func == 'softmax':
             # assume combined with cross-entropy handled at loss; pass-through
@@ -149,8 +156,12 @@ class Dropout(Layer):
         self.trainable = False
 
     def forward(self, x, training=False):
+        x = cuda.asarray(x)  # Ensure input is on the right device
         if training:
-            self.mask = (self.rng.random(x.shape) >= self.rate).astype(x.dtype)
+            xp = cuda.get_array_module(x)
+            # Generate mask on CPU then move to GPU if needed
+            mask = (self.rng.random(x.shape) >= self.rate).astype(x.dtype)
+            self.mask = cuda.asarray(mask)
             return x * self.mask / (1 - self.rate)
         return x
 
@@ -180,10 +191,10 @@ class Conv2D(Layer):
         kh, kw = self.kernel_size
         self.params['W'] = glorot_uniform((kh, kw, c, self.filters), self.rng)
         if self.use_bias:
-            self.params['b'] = np.zeros((self.filters,), dtype=np.float32)
-        self.grads['W'] = np.zeros_like(self.params['W'])
+            self.params['b'] = cuda.asarray(np.zeros((self.filters,), dtype=np.float32))
+        self.grads['W'] = cuda.zeros_like(self.params['W'])
         if self.use_bias:
-            self.grads['b'] = np.zeros_like(self.params['b'])
+            self.grads['b'] = cuda.zeros_like(self.params['b'])
         if self.padding == 'same':
             out_h = int(np.ceil(h / self.stride))
             out_w = int(np.ceil(w / self.stride))
@@ -209,12 +220,13 @@ class Conv2D(Layer):
         batch, h, w, c = x.shape
         kh, kw = self.kernel_size
         pt, pb, pl, pr = self._compute_padding(h, w)
-        x_p = np.pad(x, ((0,0),(pt,pb),(pl,pr),(0,0)), mode='constant')
+        xp = cuda.get_array_module(x)
+        x_p = xp.pad(x, ((0,0),(pt,pb),(pl,pr),(0,0)), mode='constant')
         h_p, w_p = x_p.shape[1], x_p.shape[2]
         out_h = (h_p - kh)//self.stride + 1
         out_w = (w_p - kw)//self.stride + 1
-        # Extract patches
-        cols = np.lib.stride_tricks.as_strided(
+        # Extract patches using stride tricks (works with CuPy too)
+        cols = xp.lib.stride_tricks.as_strided(
             x_p,
             shape=(batch, out_h, out_w, kh, kw, c),
             strides=(x_p.strides[0], self.stride*x_p.strides[1], self.stride*x_p.strides[2], x_p.strides[1], x_p.strides[2], x_p.strides[3])
@@ -222,6 +234,7 @@ class Conv2D(Layer):
         return cols, out_h, out_w, (pt,pb,pl,pr), x_p.shape
 
     def forward(self, x, training=False):
+        x = cuda.asarray(x)  # Ensure input is on the right device
         self.last_x = x
         cols, out_h, out_w, pads, padded_shape = self._im2col(x)
         W_col = self.params['W'].reshape(-1, self.filters)  # (kh*kw*c, F)
@@ -237,18 +250,19 @@ class Conv2D(Layer):
         cols, W_col, out_h, out_w, pads, padded_shape = self.cache
         kh, kw = self.kernel_size
         batch = self.last_x.shape[0]
+        xp = cuda.get_array_module(grad)
         grad_2d = grad.reshape(batch*out_h*out_w, self.filters)
         # Grad weights
         dW_col = cols.T @ grad_2d  # (kh*kw*c, F)
         self.grads['W'][...] = dW_col.reshape(kh, kw, self.last_x.shape[3], self.filters)
         if self.use_bias:
-            self.grads['b'][...] = grad_2d.sum(axis=0)
+            self.grads['b'][...] = xp.sum(grad_2d, axis=0)
         # Grad input
         dcols = grad_2d @ W_col.T  # (N*out_h*out_w, kh*kw*c)
         # col2im
         pt,pb,pl,pr = pads
         _, h_p, w_p, c = padded_shape
-        dx_p = np.zeros((batch, h_p, w_p, c), dtype=self.last_x.dtype)
+        dx_p = xp.zeros((batch, h_p, w_p, c), dtype=self.last_x.dtype)
         # Reconstruct using loops over spatial output (still much faster than naive pixel loops)
         dcols_r = dcols.reshape(batch, out_h, out_w, kh, kw, c)
         for i in range(out_h):
@@ -282,29 +296,31 @@ class MaxPool2D(Layer):
         self.built = True
 
     def forward(self, x, training=False):
+        x = cuda.asarray(x)  # Ensure input is on the right device
         self.last_x = x
         batch, h, w, c = x.shape
         ph, pw = self.pool_size
         out_h = (h - ph) // self.stride + 1
         out_w = (w - pw) // self.stride + 1
+        xp = cuda.get_array_module(x)
         # Fast path when stride == pool size: reshape + max
         if self.stride == ph and self.stride == pw:
             x_reshaped = x[:, :out_h*ph, :out_w*pw, :].reshape(batch, out_h, ph, out_w, pw, c)
-            y = x_reshaped.max(axis=(2,4))
+            y = xp.max(x_reshaped, axis=(2,4))
             # store mask indices for backward
             max_mask = (x_reshaped == y[:, :, None, :, None, :])
             self.cache = (max_mask, x_reshaped.shape, (out_h, out_w))
             return y
         # Fallback general case
-        y = np.zeros((batch, out_h, out_w, c), dtype=x.dtype)
-        self.max_idx = np.zeros_like(y, dtype=np.int32)
+        y = xp.zeros((batch, out_h, out_w, c), dtype=x.dtype)
+        self.max_idx = xp.zeros_like(y, dtype=xp.int32)
         for i in range(out_h):
             for j in range(out_w):
                 patch = x[:, i*self.stride:i*self.stride+ph, j*self.stride:j*self.stride+pw, :]
                 flat = patch.reshape(batch, ph*pw, c)
-                idx = flat.argmax(axis=1)
+                idx = xp.argmax(flat, axis=1)
                 self.max_idx[:, i, j, :] = idx
-                y[:, i, j, :] = flat[np.arange(batch)[:,None], idx, np.arange(c)]
+                y[:, i, j, :] = flat[xp.arange(batch)[:,None], idx, xp.arange(c)]
         return y
 
     def backward(self, grad):
@@ -312,6 +328,7 @@ class MaxPool2D(Layer):
         batch, h, w, c = x.shape
         ph, pw = self.pool_size
         out_h, out_w = grad.shape[1], grad.shape[2]
+        xp = cuda.get_array_module(x)
         if hasattr(self, 'cache'):
             max_mask, reshaped_shape, spatial = self.cache
             out_h, out_w = spatial
@@ -322,10 +339,10 @@ class MaxPool2D(Layer):
             dx_reshaped = (max_mask * grad_expanded).astype(x.dtype)
             # reshape back
             dx_temp = dx_reshaped.reshape(reshaped_shape)
-            dx = np.zeros_like(x)
+            dx = xp.zeros_like(x)
             dx[:, :out_h*ph, :out_w*pw, :] = dx_temp.reshape(batch, out_h, ph, out_w, pw, c).transpose(0,1,3,2,4,5).reshape(batch, out_h*ph, out_w*pw, c)
             return dx
-        dx = np.zeros_like(x)
+        dx = xp.zeros_like(x)
         for i in range(out_h):
             for j in range(out_w):
                 idx = self.max_idx[:, i, j, :]
@@ -349,20 +366,22 @@ class BatchNorm2D(Layer):
     def build(self, input_shape):
         # input: (batch, H, W, C)
         c = input_shape[-1]
-        self.params['gamma'] = np.ones((c,), dtype=np.float32)
-        self.params['beta'] = np.zeros((c,), dtype=np.float32)
-        self.grads['gamma'] = np.zeros_like(self.params['gamma'])
-        self.grads['beta'] = np.zeros_like(self.params['beta'])
-        self.running_mean = np.zeros((c,), dtype=np.float32)
-        self.running_var = np.ones((c,), dtype=np.float32)
+        self.params['gamma'] = cuda.asarray(np.ones((c,), dtype=np.float32))
+        self.params['beta'] = cuda.asarray(np.zeros((c,), dtype=np.float32))
+        self.grads['gamma'] = cuda.zeros_like(self.params['gamma'])
+        self.grads['beta'] = cuda.zeros_like(self.params['beta'])
+        self.running_mean = cuda.asarray(np.zeros((c,), dtype=np.float32))
+        self.running_var = cuda.asarray(np.ones((c,), dtype=np.float32))
         self.output_shape = input_shape
         self.built = True
 
     def forward(self, x, training=False):
+        x = cuda.asarray(x)  # Ensure input is on the right device
         self.last_x = x
+        xp = cuda.get_array_module(x)
         if training:
-            mean = x.mean(axis=(0,1,2))
-            var = x.var(axis=(0,1,2))
+            mean = xp.mean(x, axis=(0,1,2))
+            var = xp.var(x, axis=(0,1,2))
             self.batch_mean = mean
             self.batch_var = var
             self.running_mean = self.momentum * self.running_mean + (1-self.momentum) * mean

@@ -32,10 +32,10 @@ def _auto_configure_threads():
 
 _auto_configure_threads()
 
-from . import layers, losses, optim, data, model, utils  # noqa: E402
+from . import layers, losses, optim, data, model, utils, cuda  # noqa: E402
 from .model import Model  # noqa: E402
 from . import io  # noqa: E402
 
 __all__ = [
-    'layers', 'losses', 'optim', 'data', 'model', 'utils', 'io', 'Model', '_auto_configure_threads'
+    'layers', 'losses', 'optim', 'data', 'model', 'utils', 'io', 'cuda', 'Model', '_auto_configure_threads'
 ]

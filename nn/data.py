@@ -5,6 +5,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Iterator, Optional, Callable
 import os
+from . import cuda
 
 # IDX format parsing (MNIST)
 
@@ -23,7 +24,7 @@ class Dataset:
     def __len__(self):
         return self.images.shape[0]
 
-    def batches(self, batch_size: int, shuffle: bool = True, preprocess: Optional[Callable] = None, num_threads: Optional[int] = None) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+    def batches(self, batch_size: int, shuffle: bool = True, preprocess: Optional[Callable] = None, num_threads: Optional[int] = None, use_cuda: bool = True) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         idx = np.arange(len(self))
         if shuffle:
             np.random.shuffle(idx)
@@ -39,6 +40,10 @@ class Dataset:
             if preprocess:
                 X = preprocess(X)
             y = labels[start:end]
+            # Move to GPU if requested and available
+            if use_cuda and cuda.USE_CUDA:
+                X = cuda.asarray(X)
+                y = cuda.asarray(y)
             return X, y
         with ThreadPoolExecutor(max_workers=num_threads) as ex:
             futures = []
