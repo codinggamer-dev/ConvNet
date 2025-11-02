@@ -1,20 +1,122 @@
-# Virtual environments
-.venv/
+# Python# Virtual environments
 
-# VS Code settings
-.vscode/
+__pycache__/.venv/
 
-# Python cache / bytecode
-__pycache__/
-**/__pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 
-# Model weight & artifact files
+*$py.class# VS Code settings
+
+*.so.vscode/
+
+.Python
+
+build/# Python cache / bytecode
+
+develop-eggs/__pycache__/
+
+dist/**/__pycache__/
+
+downloads/*.py[cod]
+
+eggs/*.pyo
+
+.eggs/*.pyd
+
+lib/
+
+lib64/# Model weight & artifact files
+
+parts/*.hdf5
+
+sdist/*.json
+
+var/*.npz
+
+wheels/
+
+pip-wheel-metadata/# macOS / Linux misc
+
+share/python-wheels/.DS_Store
+
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Numba cache files
+*.nbc
+*.nbi
+
+# Model weights and outputs
+weights.hdf5
+weights.json
 *.hdf5
-*.json
-*.npz
+*.h5
+*.pkl
+*.pth
+*.ckpt
 
-# macOS / Linux misc
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# OS
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Documentation builds
+docs/_build/
+site/
+
+# Distribution / packaging
+*.whl
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Profiling
+*.prof
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~

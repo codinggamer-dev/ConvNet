@@ -1,18 +1,18 @@
-"""Example usage of the nn module: Train a small CNN on MNIST gzip files.
-Assumes MNIST .gz files are in ./mnist_dataset.
+"""Example usage of the convnet module: Train a small CNN on MNIST gzip files.
+Assumes MNIST .gz files are in ./mnist_dataset subdirectory.
 
-Auto thread configuration occurs when importing nn (sets BLAS threads to cpu cores).
+Auto thread configuration occurs when importing convnet (sets BLAS threads to cpu cores).
 GPU acceleration via CuPy is used automatically if available.
 """
 import os
-from nn import Model  # triggers auto thread setup before numpy heavy ops
+from convnet import Model  # triggers auto thread setup before numpy heavy ops
 import numpy as np
-from nn.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense, BatchNorm2D, Dropout
-from nn import data, cuda
+from convnet.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense, BatchNorm2D, Dropout
+from convnet import data, cuda
 
 
-def build_mnist_cnn(num_classes=10, lr=1e-3, weight_decay=1e-4, clip_norm=5.0):
-    """Construct a small CNN with regularization settings baked in."""
+def build_mnist_cnn(num_classes=10, lr=3e-3, weight_decay=1e-5, clip_norm=1.0):
+    # Construct a small CNN with regularization settings optimized for CPU training (also as good test values for everyone).
     model = Model([
         Conv2D(8, (3, 3)), Activation('relu'),
         MaxPool2D((2, 2)),
@@ -22,7 +22,6 @@ def build_mnist_cnn(num_classes=10, lr=1e-3, weight_decay=1e-4, clip_norm=5.0):
         Dense(64), Activation('relu'), Dropout(0.2),
         Dense(num_classes)
     ])
-    # New: weight decay & gradient clipping configured via compile
     model.compile(
         loss='categorical_crossentropy',
         optimizer='adam',
@@ -68,18 +67,18 @@ def main():
 
     model = build_mnist_cnn(num_classes)
 
-    # Train with early stopping & learning rate reduction on plateau.
+    # Train with hyperparameters optimized for CPU (i3-6006U, 16GB RAM, no GPU)
     history = model.fit(
         train,
-        epochs=100,
-        batch_size=256,
+        epochs=50,
+        batch_size=128,
         num_classes=num_classes,
         val_data=(X_val, y_val),
         early_stopping=True,
-        patience=15,  # More reasonable patience for early stopping
+        patience=8,
         lr_schedule='plateau',
-        lr_factor=0.5,
-        lr_patience=4,
+        lr_factor=0.3,
+        lr_patience=3,
         verbose=True
     )
 

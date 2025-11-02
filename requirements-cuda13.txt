@@ -1,4 +1,0 @@
-numpy
-tqdm
-h5py
-cupy-cuda13x

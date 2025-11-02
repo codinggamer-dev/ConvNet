@@ -14,7 +14,7 @@ Click 'Clear' to reset.
 import tkinter as tk
 import numpy as np
 import os
-from nn.model import Model
+from convnet.model import Model
 
 SCALE = 10          # Base upscale for internal reference (28*10 = 280)
 IMG_SIZE = 28

@@ -11,11 +11,11 @@ import numpy as np
 os.environ['NN_FORCE_CUDA'] = '1'
 
 try:
-    import nn
+    import convnet
     print("✅ Framework imported successfully")
-    print(f"CUDA Available: {nn.cuda.CUDA_AVAILABLE}")
-    print(f"Using CUDA: {nn.cuda.USE_CUDA}")
-    print(f"Device: {nn.cuda.get_device_name()}")
+    print(f"CUDA Available: {convnet.cuda.CUDA_AVAILABLE}")
+    print(f"Using CUDA: {convnet.cuda.USE_CUDA}")
+    print(f"Device: {convnet.cuda.get_device_name()}")
 except Exception as e:
     print(f"❌ Failed to import framework: {e}")
     sys.exit(1)
@@ -28,11 +28,11 @@ def test_gpu_training():
     np.random.seed(42)
     images = np.random.randint(0, 255, (32, 28, 28, 1), dtype=np.uint8)
     labels = np.random.randint(0, 10, (32,), dtype=np.uint8)
-    dataset = nn.data.Dataset(images, labels)
+    dataset = convnet.data.Dataset(images, labels)
     
     # Create simple model
-    from nn.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense
-    model = nn.Model([
+    from convnet.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense
+    model = convnet.Model([
         Conv2D(4, (3, 3)), Activation('relu'),
         MaxPool2D((2, 2)),
         Flatten(),
@@ -60,8 +60,8 @@ def test_gpu_training():
         
         # Test prediction
         sample = images[:4].astype(np.float32) / 255.0
-        if nn.cuda.USE_CUDA:
-            sample = nn.cuda.asarray(sample)
+        if convnet.cuda.USE_CUDA:
+            sample = convnet.cuda.asarray(sample)
         
         preds = model.predict(sample)
         print(f"Prediction shape: {preds.shape}")
@@ -81,27 +81,27 @@ def test_cuda_array_operations():
     try:
         # Test basic array operations
         x = np.random.randn(16, 10).astype(np.float32)
-        x_gpu = nn.cuda.asarray(x)
+        x_gpu = convnet.cuda.asarray(x)
         
         print(f"Original: {type(x)}")
         print(f"GPU version: {type(x_gpu)}")
         
         # Test one_hot with GPU array
         labels = np.random.randint(0, 5, (16,))
-        if nn.cuda.USE_CUDA:
-            labels = nn.cuda.asarray(labels)
+        if convnet.cuda.USE_CUDA:
+            labels = convnet.cuda.asarray(labels)
         
-        oh = nn.utils.one_hot(labels, 5)
+        oh = convnet.utils.one_hot(labels, 5)
         print(f"One-hot result type: {type(oh)}")
         print(f"One-hot shape: {oh.shape}")
         
         # Test loss computation
-        from nn.losses import CategoricalCrossentropy
+        from convnet.losses import CategoricalCrossentropy
         loss = CategoricalCrossentropy()
         
         pred = np.random.randn(16, 5).astype(np.float32)
-        if nn.cuda.USE_CUDA:
-            pred = nn.cuda.asarray(pred)
+        if convnet.cuda.USE_CUDA:
+            pred = convnet.cuda.asarray(pred)
         
         loss_val = loss.forward(pred, labels)
         print(f"Loss value: {loss_val}, type: {type(loss_val)}")
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     
     if success:
         print("\n🎉 All GPU tests passed!")
-        if nn.cuda.USE_CUDA:
+        if convnet.cuda.USE_CUDA:
             print("🚀 Ready for full GPU training!")
         else:
             print("🖥️  Running on CPU (expected if no GPU available)")
