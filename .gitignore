@@ -41,7 +41,7 @@ share/python-wheels/.DS_Store
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
+MANIFEST.in
 
 # Virtual environments
 .env
