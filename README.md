@@ -1,5 +1,6 @@
 # 🧠 ConvNet-NumPy
 
+[![PyPI](https://img.shields.io/badge/PyPI-convnet-blue.svg)](https://pypi.org/project/convnet/)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![NumPy](https://img.shields.io/badge/NumPy-Powered-green.svg)](https://numpy.org/)
 [![CUDA Support](https://img.shields.io/badge/CUDA-Optional-green.svg)](https://cupy.dev/)
@@ -41,25 +42,27 @@ This project was created as a school assignment with the goal of understanding d
 
 ### Installation
 
+**Install from PyPI (Recommended):**
+
+```bash
+# Install the latest version from PyPI
+pip install convnet
+
+# Or install with GPU support
+pip install convnet[cuda11]  # For CUDA 11.x
+pip install convnet[cuda12]  # For CUDA 12.x
+pip install convnet[cuda13]  # For CUDA 13.x
+```
+
+**Install from Source:**
+
 ```bash
 # Clone the repository
 git clone https://github.com/codinggamer-dev/ConvNet-NumPy.git
 cd ConvNet-NumPy
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Optional: Install for GPU acceleration (CUDA 11.x)
-pip install cupy-cuda11x
-
-# Optional: Install as package
+# Install in development mode
 pip install -e .
-
-# Optional: Install via PIP at PyPi
-pip install convnet
-
-# Optional: Install via PIP at PyPi with CUDA 13
-pip install convnet[cuda13]
 ```
 
 ### Your First Neural Network in 10 Lines
@@ -221,11 +224,15 @@ python examples/benchmark_numba.py
 ConvNet-NumPy automatically detects and uses CUDA GPUs when CuPy is installed:
 
 ```bash
-# For CUDA 11.x
-pip install cupy-cuda11x
+# Install with GPU support using extras
+pip install convnet[cuda11]  # For CUDA 11.x
+pip install convnet[cuda12]  # For CUDA 12.x
+pip install convnet[cuda13]  # For CUDA 13.x
 
-# For CUDA 12.x
-pip install cupy-cuda12x
+# Or install CuPy separately
+pip install cupy-cuda11x  # For CUDA 11.x
+pip install cupy-cuda12x  # For CUDA 12.x
+pip install cupy-cuda13x  # For CUDA 13.x
 ```
 
 The framework will automatically:
