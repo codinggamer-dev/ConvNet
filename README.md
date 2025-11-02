@@ -54,6 +54,12 @@ pip install cupy-cuda11x
 
 # Optional: Install as package
 pip install -e .
+
+# Optional: Install via PIP at PyPi
+pip install convnet
+
+# Optional: Install via PIP at PyPi with CUDA 13
+pip install convnet[cuda13]
 ```
 
 ### Your First Neural Network in 10 Lines
