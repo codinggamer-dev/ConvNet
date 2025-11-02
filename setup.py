@@ -12,7 +12,7 @@ license_text = "MIT" if license_file.exists() else ""
 
 setup(
     name="convnet",
-    version="1.0.0beta",
+    version="1.0.0-alpha",
     author="codinggamer-dev",
     author_email="ege.tba1940@gmail.com",
     description="A minimal, educational convolutional neural network framework built from scratch using NumPy",
@@ -25,7 +25,7 @@ setup(
     },
     packages=find_packages(exclude=["examples", "examples.*", "tests", "tests.*"]),
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 3 - Alpha",
         "Intended Audience :: Education",
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: MIT License",
