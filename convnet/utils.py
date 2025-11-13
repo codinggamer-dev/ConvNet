@@ -54,7 +54,16 @@ def deserialize_layers(config_list: List[Dict[str, Any]]) -> List[Layer]:
     layers: List[Layer] = []
     for conf in config_list:
         cls = NAME2LAYER[conf['class']]
-        layers.append(cls(**conf['config']))
+        config = conf['config'].copy()
+        
+        # Convert lists to tuples for parameters that require tuples
+        # (JSON/HDF5 serialization converts tuples to lists)
+        if 'kernel_size' in config and isinstance(config['kernel_size'], list):
+            config['kernel_size'] = tuple(config['kernel_size'])
+        if 'pool_size' in config and isinstance(config['pool_size'], list):
+            config['pool_size'] = tuple(config['pool_size'])
+        
+        layers.append(cls(**config))
     return layers
 
 

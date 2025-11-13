@@ -8,3 +8,5 @@ global-exclude *.nbc
 global-exclude *.nbi
 global-exclude .venv
 global-exclude .vscode
+global-exclude .gitignore
+global-exclude build-publish.sh

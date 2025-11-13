@@ -48,7 +48,10 @@ def main():
     print()
     
     # Load full training and test sets
-    train_full, test = data.load_mnist_gz('mnist_dataset')
+    # Get the path to mnist_dataset relative to this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    mnist_path = os.path.join(script_dir, 'mnist_dataset')
+    train_full, test = data.load_mnist_gz(mnist_path)
     num_classes = 10
 
     # Create a validation split from training data (e.g., last 10%)

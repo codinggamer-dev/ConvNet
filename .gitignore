@@ -120,3 +120,10 @@ dmypy.json
 *.bak
 *.swp
 *~
+
+# Publish/Build files
+build-publish.sh
+dist/
+build/
+*.egg-info/
+MANIFEST.in
