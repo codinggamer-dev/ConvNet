@@ -1,8 +1,8 @@
-"""Optimizers (pure numpy with optional numba acceleration)."""
+"""Optimizers with JAX acceleration support."""
 from __future__ import annotations
 import numpy as np
 from typing import Iterable, Tuple, Optional, Dict
-from . import numba_ops
+from . import jax_backend as backend
 
 
 class Optimizer:
@@ -45,24 +45,31 @@ class Optimizer:
         Returns:
             Regularized gradient
         """
+        xp = backend.get_array_module()
+        
         # L2 regularization (weight decay)
         if self.weight_decay > 0:
             g = g + self.weight_decay * p
         
         # Gradient clipping by norm
         if self.clip_norm is not None:
-            norm: float = float(np.linalg.norm(g))
+            norm = float(backend.to_numpy(xp.linalg.norm(g)))
             if norm > self.clip_norm:
                 g = g * (self.clip_norm / norm)
         return g
         
-    def step(self, params_and_grads: Iterable[Tuple[np.ndarray, np.ndarray]]) -> None:
-        """Perform one optimization step."""
+    def step(self, params_and_grads: Iterable[Tuple[Any, str, np.ndarray, np.ndarray]]) -> None:
+        """Perform one optimization step.
+        
+        Args:
+            params_and_grads: Iterable of (layer, param_name, parameter, gradient) tuples
+        """
         raise NotImplementedError
         
     def reset(self) -> None:
         """Reset optimizer state (e.g., momentum)."""
         pass
+
 
 class SGD(Optimizer):
     """Stochastic Gradient Descent optimizer with optional momentum."""
@@ -74,23 +81,28 @@ class SGD(Optimizer):
         self.momentum: float = momentum
         self.v: Dict[int, np.ndarray] = {}
         
-    def step(self, params_and_grads: Iterable[Tuple[np.ndarray, np.ndarray]]) -> None:
+    def step(self, params_and_grads: Iterable[Tuple[Any, str, np.ndarray, np.ndarray]]) -> None:
         """Update parameters using SGD with optional momentum.
         
         Args:
-            params_and_grads: Iterable of (parameter, gradient) tuples
+            params_and_grads: Iterable of (layer, param_name, parameter, gradient) tuples
         """
-        for i, (p, g) in enumerate(params_and_grads):
+        xp = backend.get_array_module()
+        for i, (layer, name, p, g) in enumerate(params_and_grads):
             g = self._apply_regularization(p, g)
             if self.momentum > 0:
                 # Momentum: accumulate velocity
-                v: np.ndarray = self.v.get(i, np.zeros_like(g))
+                v = self.v.get(i, xp.zeros_like(g))
                 v = self.momentum * v - self.lr * g
                 self.v[i] = v
-                p += v
+                # Update using layer's update method for JAX compatibility
+                p_new = p + v
+                layer.update_param(name, p_new)
             else:
-                # Standard SGD
-                p -= self.lr * g
+                # Standard SGD - update using layer's method for JAX compatibility
+                p_new = p - self.lr * g
+                layer.update_param(name, p_new)
+
 
 class Adam(Optimizer):
     """Adam optimizer with bias correction and adaptive learning rates."""
@@ -112,30 +124,33 @@ class Adam(Optimizer):
         self.v: Dict[int, np.ndarray] = {}
         self.t: int = 0
         
-    def step(self, params_and_grads: Iterable[Tuple[np.ndarray, np.ndarray]]) -> None:
+    def step(self, params_and_grads: Iterable[Tuple[Any, str, np.ndarray, np.ndarray]]) -> None:
         """Update parameters using Adam optimization.
         
         Args:
-            params_and_grads: Iterable of (parameter, gradient) tuples
+            params_and_grads: Iterable of (layer, param_name, parameter, gradient) tuples
         """
+        xp = backend.get_array_module()
         self.t += 1
-        for i, (p, g) in enumerate(params_and_grads):
+        for i, (layer, name, p, g) in enumerate(params_and_grads):
             g = self._apply_regularization(p, g)
             
             # Get or initialize moment estimates
-            m: np.ndarray = self.m.get(i, np.zeros_like(g))
-            v: np.ndarray = self.v.get(i, np.zeros_like(g))
+            m = self.m.get(i, xp.zeros_like(g))
+            v = self.v.get(i, xp.zeros_like(g))
             
             # Update biased first and second moment estimates
             m = self.beta1 * m + (1 - self.beta1) * g
             v = self.beta2 * v + (1 - self.beta2) * (g * g)
             
             # Bias correction
-            m_hat: np.ndarray = m / (1 - self.beta1 ** self.t)
-            v_hat: np.ndarray = v / (1 - self.beta2 ** self.t)
+            m_hat = m / (1 - self.beta1 ** self.t)
+            v_hat = v / (1 - self.beta2 ** self.t)
             
-            # Update parameters
-            p -= self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+            # Update parameters using layer's update method for JAX compatibility
+            update = self.lr * m_hat / (xp.sqrt(v_hat) + self.eps)
+            p_new = p - update
+            layer.update_param(name, p_new)
             
             # Store updated moments
             self.m[i] = m

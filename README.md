@@ -1,22 +1,22 @@
-# 🧠 ConvNet-NumPy
+# 🧠 ConvNet
 
 [![PyPI](https://img.shields.io/badge/PyPI-convnet-blue.svg)](https://pypi.org/project/convnet/)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![NumPy](https://img.shields.io/badge/NumPy-Powered-green.svg)](https://numpy.org/)
-[![CUDA Support](https://img.shields.io/badge/CUDA-Optional-green.svg)](https://cupy.dev/)
+[![JAX](https://img.shields.io/badge/JAX-Accelerated-green.svg)](https://jax.readthedocs.io/)
+[![GPU/TPU](https://img.shields.io/badge/GPU%2FTPU-Supported-green.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 [![Status](https://img.shields.io/badge/Status-Educational-orange.svg)]()
 
-> **A clean, educational Convolutional Neural Network framework built from scratch using pure Python and NumPy**
+> **A clean, educational Convolutional Neural Network framework built from scratch with JAX acceleration**
 
-This project was created as a school assignment with the goal of understanding deep learning from the ground up. It's designed to be **easy to understand** and **learn from**, implementing a complete CNN framework using only NumPy for core computations. Additional modules are used only for visualization (tqdm), optimization (Numba JIT), and optional GPU acceleration (CuPy).
+This project was created as a school assignment with the goal of understanding deep learning from the ground up. It's designed to be **easy to understand** and **learn from**, implementing a complete CNN framework with JAX for high-performance JIT compilation and automatic GPU/TPU acceleration. The framework uses simple, readable code while leveraging JAX's XLA compiler for production-grade performance.
 
 ---
 
 ## 🌟 Features
 
 ### Core Functionality
-- ✅ **Pure NumPy Core** - All neural network math implemented from scratch
+- ✅ **JAX-Powered Core** - All neural network operations with JIT compilation
 - 🔥 **Complete CNN Support** - Conv2D, MaxPool2D, Flatten, Dense layers
 - 📊 **Modern Training** - Batch normalization, dropout, early stopping
 - 🎯 **Smart Optimizers** - SGD with momentum and Adam optimizer
@@ -25,9 +25,9 @@ This project was created as a school assignment with the goal of understanding d
 - 🔄 **Data Augmentation Ready** - Thread-pooled data loading
 
 ### Performance Enhancements
-- ⚡ **Numba JIT Compilation** - Automatic acceleration of critical operations
-- 🚀 **Optional GPU Support** - CUDA acceleration via CuPy
-- 🧵 **Multi-threading** - Auto-configured BLAS threads for CPU optimization
+- ⚡ **JAX JIT Compilation** - XLA-compiled operations for maximum speed
+- 🚀 **GPU/TPU Support** - Automatic hardware acceleration via JAX
+- 🧵 **XLA Optimization** - Automatic kernel fusion and optimization
 - 📦 **Batch Processing** - Efficient mini-batch training
 
 ### Developer Experience
@@ -49,17 +49,16 @@ This project was created as a school assignment with the goal of understanding d
 pip install convnet
 
 # Or install with GPU support
-pip install convnet[cuda11]  # For CUDA 11.x
-pip install convnet[cuda12]  # For CUDA 12.x
-pip install convnet[cuda13]  # For CUDA 13.x
+pip install convnet[gpu]   # For NVIDIA GPU (CUDA)
+pip install convnet[tpu]   # For Google TPU
 ```
 
 **Install from Source:**
 
 ```bash
 # Clone the repository
-git clone https://github.com/codinggamer-dev/ConvNet-NumPy.git
-cd ConvNet-NumPy
+git clone https://github.com/codinggamer-dev/ConvNet.git
+cd ConvNet
 
 # Install in development mode
 pip install -e .
@@ -68,37 +67,34 @@ pip install -e .
 ### Your First Neural Network in 10 Lines
 
 ```python
-from convnet import Model
-from convnet.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense
+from convnet import Model, Conv2D, Activation, MaxPool2D, Flatten, Dense
 
 # Build a simple CNN
 model = Model([
     Conv2D(8, (3, 3)), Activation('relu'),
     MaxPool2D((2, 2)),
     Flatten(),
-    Dense(10)
+    Dense(10), Activation('softmax')
 ])
 
 # Configure training
 model.compile(loss='categorical_crossentropy', optimizer='adam', lr=0.001)
 
 # Train on your data
-history = model.fit(train_dataset, epochs=10, batch_size=32)
+history = model.fit(train_dataset, epochs=10, batch_size=32, num_classes=10)
 ```
 
 ---
 
 ## 📖 Complete MNIST Example
 
-Here's a full example training a CNN on MNIST:
-
 ```python
 import numpy as np
-from convnet import Model, data
-from convnet.layers import Conv2D, Activation, MaxPool2D, Flatten, Dense, Dropout
+from convnet import Model, Conv2D, Activation, MaxPool2D, Flatten, Dense, Dropout, Dataset
+from convnet.data import load_mnist_gz
 
 # Load MNIST data
-train_data, test_data = data.load_mnist_gz('mnist_dataset')
+train_data, test_data = load_mnist_gz('mnist_dataset')
 
 # Build the model
 model = Model([
@@ -108,44 +104,15 @@ model = Model([
     MaxPool2D((2, 2)),
     Flatten(),
     Dense(64), Activation('relu'), Dropout(0.2),
-    Dense(10)  # 10 classes for MNIST
+    Dense(10)
 ])
 
-# Compile with Adam optimizer
-model.compile(
-    loss='categorical_crossentropy',
-    optimizer='adam',
-    lr=0.001,
-    weight_decay=1e-4,
-    clip_norm=5.0
-)
-
-# Create validation split
-split_idx = int(0.9 * len(train_data))
-X_val = train_data.images[split_idx:].astype(np.float32) / 255.0
-y_val = train_data.labels[split_idx:]
-train_subset = data.Dataset(train_data.images[:split_idx], train_data.labels[:split_idx])
-
-# Train with early stopping and LR scheduling
-history = model.fit(
-    train_subset,
-    epochs=100,
-    batch_size=256,
-    num_classes=10,
-    val_data=(X_val, y_val),
-    early_stopping=True,
-    patience=15,
-    lr_schedule='plateau',
-    lr_factor=0.5,
-    lr_patience=4
-)
+# Compile and train
+model.compile(loss='categorical_crossentropy', optimizer='adam', lr=0.001)
+history = model.fit(train_data, epochs=50, batch_size=128, num_classes=10)
 
 # Save the model
-model.save('my_mnist_model.hdf5')
-
-# Later... load and use
-loaded_model = Model.load('my_mnist_model.hdf5')
-predictions = loaded_model.predict(test_images)
+model.save('my_model.hdf5')
 ```
 
 ---
@@ -208,37 +175,37 @@ Benchmark GPU vs CPU performance.
 python examples/test_gpu_training.py
 ```
 
-### 4. Numba Benchmark (`benchmark_numba.py`)
-Compare Numba JIT vs pure NumPy performance.
+### 4. JAX Benchmark (`benchmark_jax.py`)
+Compare JAX JIT performance vs NumPy baseline.
 
 ```bash
-python examples/benchmark_numba.py
+python examples/benchmark_jax.py
 ```
 
 ---
 
 ## ⚙️ Advanced Features
 
-### GPU Acceleration
+### GPU/TPU Acceleration
 
-ConvNet-NumPy automatically detects and uses CUDA GPUs when CuPy is installed:
+ConvNet automatically detects and uses available hardware accelerators via JAX:
 
 ```bash
-# Install with GPU support using extras
-pip install convnet[cuda11]  # For CUDA 11.x
-pip install convnet[cuda12]  # For CUDA 12.x
-pip install convnet[cuda13]  # For CUDA 13.x
+# Install with GPU support
+pip install convnet[gpu]
 
-# Or install CuPy separately
-pip install cupy-cuda11x  # For CUDA 11.x
-pip install cupy-cuda12x  # For CUDA 12.x
-pip install cupy-cuda13x  # For CUDA 13.x
+# Or for TPU
+pip install convnet[tpu]
+
+# Or install JAX with CUDA manually
+pip install jax[cuda12]  # For CUDA 12.x
 ```
 
 The framework will automatically:
-- Move tensors to GPU
-- Use GPU-accelerated operations
-- Handle CPU ↔ GPU transfers transparently
+- Detect available GPUs/TPUs
+- JIT-compile operations with XLA
+- Move tensors to accelerator devices
+- Handle device transfers transparently
 
 ### Regularization
 
@@ -343,7 +310,7 @@ This project is designed for learning. Here's how to explore:
 - 🔄 **Backpropagation** - Full gradient computation chain
 - 📉 **Gradient Descent** - SGD and Adam optimization
 - 🎲 **Weight Initialization** - Glorot/Xavier uniform
-- 🧮 **Convolution Math** - Pure NumPy implementation
+- 🧮 **Convolution Math** - JIT-compiled implementation
 - 📊 **Batch Normalization** - Running mean/variance tracking
 - 🎯 **Softmax & Cross-Entropy** - Numerically stable implementation
 
@@ -364,7 +331,7 @@ This framework was built to:
 ## 📦 Project Structure
 
 ```
-ConvNet-NumPy/
+ConvNet/
 ├── convnet/              # Core framework
 │   ├── __init__.py       # Package initialization & auto-config
 │   ├── layers.py         # Layer implementations
@@ -373,14 +340,12 @@ ConvNet-NumPy/
 │   ├── losses.py         # Loss functions
 │   ├── data.py           # Data loading utilities
 │   ├── utils.py          # Helper functions
-│   ├── cuda.py           # GPU acceleration wrapper
-│   ├── numba_ops.py      # JIT-compiled operations
+│   ├── jax_backend.py    # JAX acceleration backend
 │   └── io.py             # Model save/load
 ├── examples/             # Example scripts
 │   ├── mnist_train-example.py
 │   ├── mnist_gui.py
-│   ├── test_gpu_training.py
-│   └── benchmark_numba.py
+│   └── mnist_gui.py
 ├── requirements.txt      # Dependencies
 ├── setup.py              # Package setup
 ├── LICENSE.md            # MIT License
@@ -403,13 +368,15 @@ This is an educational project, but contributions are welcome! Feel free to:
 
 ### Core Dependencies
 - **Python** 3.8 or higher
-- **NumPy** ≥ 1.20.0 (the star of the show! 🌟)
+- **JAX** ≥ 0.4.0 (high-performance computing! 🚀)
+- **jaxlib** ≥ 0.4.0 (JAX runtime)
+- **NumPy** ≥ 1.20.0 (compatibility layer)
 - **tqdm** ≥ 4.60.0 (progress bars)
 - **h5py** ≥ 3.0.0 (model serialization)
-- **Numba** ≥ 0.56.0 (JIT compilation)
 
 ### Optional Dependencies
-- **CuPy** ≥ 10.0.0 (GPU acceleration)
+- **jax[cuda12]** (GPU acceleration)
+- **jax[tpu]** (TPU acceleration)
 - **tkinter** (for GUI demo, usually included with Python)
 
 ---
@@ -426,7 +393,7 @@ Copyright (c) 2025 Tim Bauer
 
 - Built as a school project to learn deep learning fundamentals
 - Inspired by PyTorch and TensorFlow's clean APIs
-- Thanks to the NumPy, Numba, and CuPy teams for amazing tools
+- Powered by JAX and XLA for high-performance computation
 - MNIST dataset by Yann LeCun and Corinna Cortes - the perfect dataset for learning CNNs
 
 ---

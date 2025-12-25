@@ -1,12 +1,15 @@
 include LICENSE.md
 include README.md
 include requirements.txt
-recursive-include examples *.py *.gz *.idx *.md
+recursive-include convnet *.py
+recursive-include examples *.py
 global-exclude __pycache__
-global-exclude *.py[co]
+global-exclude *.py[cod]
 global-exclude *.nbc
 global-exclude *.nbi
-global-exclude .venv
+global-exclude *.hdf5
+global-exclude *.json
+global-exclude .venv*
 global-exclude .vscode
-global-exclude .gitignore
+global-exclude .git*
 global-exclude build-publish.sh

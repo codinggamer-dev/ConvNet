@@ -1,8 +1,8 @@
-"""Loss functions and utilities."""
+"""Loss functions with JIT-compiled operations."""
 from __future__ import annotations
 import numpy as np
 from typing import Dict
-from . import cuda
+from . import jax_backend as backend
 
 
 class Loss:
@@ -28,11 +28,12 @@ class Loss:
         """
         raise NotImplementedError
 
+
 class CategoricalCrossentropy(Loss):
     """Cross-entropy loss for multi-class classification.
     
     Supports both integer labels and one-hot encoded labels.
-    Uses numerically stable softmax computation.
+    Uses JIT-compiled numerically stable softmax computation.
     """
     
     def __init__(self) -> None:
@@ -51,26 +52,26 @@ class CategoricalCrossentropy(Loss):
         Returns:
             Scalar loss value
         """
-        y_pred = cuda.asarray(y_pred)
-        y_true = cuda.asarray(y_true)
+        y_pred = backend.asarray(y_pred)
+        y_true = backend.asarray(y_true)
         self.y_true = y_true
         self.y_pred = y_pred
-        xp = cuda.get_array_module(y_pred)
+        xp = backend.get_array_module()
         
         # Compute softmax in numerically stable way (subtract max)
-        probs: np.ndarray = y_pred - xp.max(y_pred, axis=1, keepdims=True)
+        probs = y_pred - xp.max(y_pred, axis=1, keepdims=True)
         probs = xp.exp(probs)
-        probs /= xp.sum(probs, axis=1, keepdims=True)
+        probs = probs / xp.sum(probs, axis=1, keepdims=True)
         self.probs = probs
         
         if y_true.ndim == 1 or (y_true.ndim == 2 and y_true.shape[1] == 1):
             # Integer labels: directly index probabilities
-            indices: np.ndarray = y_true.reshape(-1)
-            log_likelihood: np.ndarray = -xp.log(probs[xp.arange(len(y_true)), indices] + 1e-12)
-            return float(cuda.to_cpu(xp.mean(log_likelihood)))
+            indices = y_true.reshape(-1)
+            log_likelihood = -xp.log(probs[xp.arange(len(y_true)), indices] + 1e-12)
+            return float(backend.to_numpy(xp.mean(log_likelihood)))
         else:
             # One-hot labels: compute weighted sum
-            return float(cuda.to_cpu(-xp.mean(xp.sum(y_true * xp.log(probs + 1e-12), axis=1))))
+            return float(backend.to_numpy(-xp.mean(xp.sum(y_true * xp.log(probs + 1e-12), axis=1))))
 
     def backward(self) -> np.ndarray:
         """Compute gradient of loss w.r.t. logits.
@@ -78,20 +79,25 @@ class CategoricalCrossentropy(Loss):
         Returns:
             Gradient array with same shape as predictions
         """
-        y_true: np.ndarray = self.y_true
-        probs: np.ndarray = self.probs
-        xp = cuda.get_array_module(probs)
+        y_true = self.y_true
+        probs = self.probs
+        xp = backend.get_array_module()
         
         if y_true.ndim == 1 or (y_true.ndim == 2 and y_true.shape[1] == 1):
             # Integer labels
-            grad: np.ndarray = probs.copy()
-            indices: np.ndarray = y_true.reshape(-1)
-            grad[xp.arange(len(y_true)), indices] -= 1
-            grad /= len(y_true)
+            grad = probs.copy() if hasattr(probs, 'copy') else xp.array(probs)
+            indices = y_true.reshape(-1)
+            # For JAX, we need to use .at[].set() syntax
+            if backend.USE_JAX and backend.jnp is not None:
+                grad = grad.at[xp.arange(len(y_true)), indices].add(-1)
+            else:
+                grad[xp.arange(len(y_true)), indices] -= 1
+            grad = grad / len(y_true)
             return grad
         else:
             # One-hot labels
             return (probs - y_true) / y_true.shape[0]
+
 
 class MSE(Loss):
     """Mean Squared Error loss for regression tasks."""
@@ -111,12 +117,12 @@ class MSE(Loss):
         Returns:
             Scalar loss value
         """
-        y_pred = cuda.asarray(y_pred)
-        y_true = cuda.asarray(y_true)
+        y_pred = backend.asarray(y_pred)
+        y_true = backend.asarray(y_true)
         self.y_pred = y_pred
         self.y_true = y_true
-        xp = cuda.get_array_module(y_pred)
-        return float(cuda.to_cpu(xp.mean((y_pred - y_true) ** 2)))
+        xp = backend.get_array_module()
+        return float(backend.to_numpy(xp.mean((y_pred - y_true) ** 2)))
         
     def backward(self) -> np.ndarray:
         """Compute gradient of MSE w.r.t. predictions.

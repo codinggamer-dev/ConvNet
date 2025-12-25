@@ -1,4 +1,4 @@
-# ConvNet-NumPy Requirements
+# ConvNet Requirements
 # Core dependencies for the CNN framework
 
 # Essential numerical computing
@@ -7,16 +7,15 @@ numpy>=1.20.0
 # Progress bars for training visualization
 tqdm>=4.60.0
 
-# JIT compilation for performance-critical operations
-numba>=0.56.0
+# JAX for JIT compilation and GPU/TPU acceleration
+jax>=0.4.0
+jaxlib>=0.4.0
 
 # Model serialization (HDF5 format)
 h5py>=3.0.0
 
 # Optional: GPU acceleration (uncomment for CUDA support)
-# For CUDA 11.x: cupy-cuda11x>=10.0.0
-# For CUDA 12.x: cupy-cuda12x>=12.0.0
-# For CUDA 13.x: cupy-cuda13x>=13.0.0
+# pip install jax[cuda12]
 
 # Note: tkinter is required for the GUI demo (mnist_gui.py)
 # It's usually included with Python, but on some Linux distributions:

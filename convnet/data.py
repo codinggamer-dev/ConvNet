@@ -5,7 +5,7 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Iterator, Optional, Callable
 import os
-from . import cuda
+from . import jax_backend as backend
 
 # IDX format parsing (MNIST)
 
@@ -102,9 +102,9 @@ class Dataset:
                 X = preprocess(X)
             y: np.ndarray = labels[start:end]
             # Move to GPU if requested and available
-            if use_cuda and cuda.USE_CUDA:
-                X = cuda.asarray(X)
-                y = cuda.asarray(y)
+            if use_cuda and backend.USE_JAX:
+                X = backend.asarray(X)
+                y = backend.asarray(y)
             return X, y
         
         # Use thread pool for prefetching batches

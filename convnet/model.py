@@ -1,11 +1,12 @@
-"""Model class implementing training and prediction."""
+"""Model class implementing training and prediction with JAX acceleration."""
 from __future__ import annotations
 import numpy as np
 from typing import List, Optional, Dict, Any, Tuple, Iterator
 from .layers import Layer, NAME2LAYER
 from .losses import NAME2LOSS, Loss
 from .optim import NAME2OPT, Optimizer
-from . import io, utils, cuda
+from . import io, utils
+from . import jax_backend as backend
 from tqdm import tqdm
 import os
 
@@ -63,7 +64,12 @@ class Model:
         Returns:
             Output array
         """
-        x = cuda.asarray(x)  # Ensure input is on the right device
+        x = backend.asarray(x)  # Ensure input is on the right device
+        
+        # Build the model if not already built
+        if not self.built:
+            self.build(x.shape)
+        
         for layer in self.layers:
             x = layer.forward(x, training=training)
         return x
@@ -93,8 +99,8 @@ class Model:
         """
         if not self.built:
             self.build(x.shape)
-        x = cuda.asarray(x)  # Ensure input is on the right device
-        xp = cuda.get_array_module(x)
+        x = backend.asarray(x)  # Ensure input is on the right device
+        xp = backend.get_array_module()
         outs: List[np.ndarray] = []
         for i in range(0, x.shape[0], batch_size):
             outs.append(self.forward(x[i:i+batch_size], training=False))
@@ -191,11 +197,11 @@ class Model:
                 self.optimizer.step(self._params_and_grads())
                 
                 # Track metrics
-                losses.append(float(cuda.to_cpu(loss_val)))
+                losses.append(float(backend.to_numpy(loss_val)))
                 if y.ndim == 1:
-                    xp = cuda.get_array_module(logits)
+                    xp = backend.get_array_module()
                     preds: np.ndarray = xp.argmax(logits, axis=1)
-                    acc: float = float(cuda.to_cpu(xp.mean(preds == y)))
+                    acc: float = float(backend.to_numpy(xp.mean(preds == y)))  
                     accs.append(acc)
                 
                 pbar.set_postfix(loss=np.mean(losses), acc=np.mean(accs) if accs else 0.0)
@@ -206,9 +212,9 @@ class Model:
                 Xv, yv = val_data
                 preds_val: np.ndarray = self.predict(Xv)
                 if yv.ndim == 1:
-                    xp = cuda.get_array_module(preds_val)
+                    xp = backend.get_array_module()
                     acc_tensor = xp.mean(xp.argmax(preds_val, axis=1) == yv)
-                    val_acc = float(cuda.to_cpu(acc_tensor))
+                    val_acc = float(backend.to_numpy(acc_tensor))
                     if verbose:
                         print(f"Val acc: {val_acc:.4f}")
 
@@ -245,11 +251,11 @@ class Model:
 
         return history
 
-    def _params_and_grads(self) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
-        """Yield (parameter, gradient) tuples from all trainable layers."""
+    def _params_and_grads(self) -> Iterator[Tuple[Any, str, np.ndarray, np.ndarray]]:
+        """Yield (layer, param_name, parameter, gradient) tuples from all trainable layers."""
         for layer in self.layers:
-            for p, g in layer.get_params_and_grads():
-                yield p, g
+            for name, p, g in layer.get_params_and_grads():
+                yield layer, name, p, g
 
     def save(self, path: str) -> None:
         """Save model weights and architecture to disk.
@@ -262,7 +268,7 @@ class Model:
         for idx, layer in enumerate(self.layers):
             for name, param in layer.params.items():
                 key: str = f"{idx}_{layer.__class__.__name__}_{name}"
-                weights[key] = cuda.to_cpu(param)  # Ensure weights are on CPU
+                weights[key] = backend.to_numpy(param)  # Ensure weights are on CPU
         
         arch: List[Dict[str, Any]] = utils.serialize_layers(self.layers)
         

@@ -3,15 +3,14 @@ from __future__ import annotations
 import numpy as np
 from typing import List, Dict, Any, Union
 from .layers import NAME2LAYER, Layer
-from . import cuda
-from . import numba_ops
+from . import jax_backend as backend
 
-# Type alias for arrays that could be NumPy or CuPy
-ArrayLike = Union[np.ndarray, Any]  # Any to avoid cupy import
+# Type alias for arrays that could be NumPy or JAX
+ArrayLike = Union[np.ndarray, Any]
 
 
 def one_hot(labels: ArrayLike, num_classes: int) -> ArrayLike:
-    """Convert integer labels to one-hot encoding, supporting both CPU and GPU arrays.
+    """Convert integer labels to one-hot encoding.
     
     Args:
         labels: Integer label array
@@ -20,10 +19,13 @@ def one_hot(labels: ArrayLike, num_classes: int) -> ArrayLike:
     Returns:
         One-hot encoded array of shape (num_samples, num_classes)
     """
-    xp = cuda.get_array_module(labels)
-    labels_flat: ArrayLike = labels.reshape(-1)
-    y: ArrayLike = xp.zeros((labels_flat.size, num_classes), dtype=xp.float32)
-    y[xp.arange(labels_flat.size), labels_flat] = 1
+    xp = backend.get_array_module()
+    labels_flat = xp.reshape(labels, (-1,))
+    y = xp.zeros((labels_flat.size, num_classes), dtype=xp.float32)
+    if backend.USE_JAX and backend.jnp is not None:
+        y = y.at[xp.arange(labels_flat.size), labels_flat].set(1)
+    else:
+        y[xp.arange(labels_flat.size), labels_flat] = 1
     return y
 
 
@@ -71,9 +73,9 @@ def get_acceleration_info() -> Dict[str, bool]:
     """Get information about available acceleration backends.
     
     Returns:
-        Dict with keys 'cuda' and 'numba' indicating availability
+        Dict with keys 'jax' and 'gpu' indicating availability
     """
     return {
-        'cuda': cuda.is_cupy_available(),
-        'numba': numba_ops.is_numba_available()
+        'jax': backend.is_jax_available(),
+        'gpu': backend.is_gpu_available()
     }
