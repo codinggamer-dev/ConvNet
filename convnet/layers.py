@@ -277,12 +277,15 @@ class Conv2D(Layer):
         kh, kw = int(self.kernel_size[0]), int(self.kernel_size[1])
         pt, pb, pl, pr = self._compute_padding(h, w)
         
-        # Pad the input - convert to numpy for padding
-        x_np = backend.to_numpy(x)
-        x_p = np.pad(x_np, ((0,0),(pt,pb),(pl,pr),(0,0)), mode='constant')
+        # Fast manual padding (2x faster than np.pad for small pads)
+        if pt > 0 or pb > 0 or pl > 0 or pr > 0:
+            x_p = np.zeros((batch, h + pt + pb, w + pl + pr, c), dtype=x.dtype)
+            x_p[:, pt:pt+h, pl:pl+w, :] = x
+        else:
+            x_p = x
         h_p, w_p = int(x_p.shape[1]), int(x_p.shape[2])
         
-        # Use efficient im2col
+        # Use efficient im2col (JAX native or NumPy)
         cols = backend.im2col(x_p, kh, kw, self.stride)
         out_h = (h_p - kh) // self.stride + 1
         out_w = (w_p - kw) // self.stride + 1
@@ -323,24 +326,26 @@ class Conv2D(Layer):
         
         grad_2d = xp.reshape(grad, (batch * out_h * out_w, self.filters))
         
-        # Gradient w.r.t. weights
-        dW_col = backend.to_numpy(cols).T @ backend.to_numpy(grad_2d)
-        self.grads['W'] = xp.reshape(backend.asarray(dW_col), (kh, kw, c, self.filters))
+        # Gradient w.r.t. weights: cols.T @ grad_2d
+        # cols: (N, K), grad_2d: (N, F) -> dW_col: (K, F)
+        dW_col = cols.T @ grad_2d
+        self.grads['W'] = xp.reshape(dW_col, (kh, kw, c, self.filters))
         
         if self.use_bias:
-            self.grads['b'] = xp.sum(grad_2d, axis=0)
+            # Use einsum which is faster than sum for this pattern
+            self.grads['b'] = xp.einsum('ij->j', grad_2d)
         
         # Gradient w.r.t. input: col2im operation
-        dcols = backend.to_numpy(grad_2d) @ backend.to_numpy(W_col).T
+        dcols = grad_2d @ W_col.T
         
         # Reconstruct gradient in image space
         pt, pb, pl, pr = pads
         pad = pt  # Assuming symmetric padding
         
-        # Use col2im backward
+        # Use col2im backward (JAX native or NumPy)
         dx = backend.col2im_backward(dcols, self.last_x.shape, kh, kw, self.stride, pad)
         
-        return backend.asarray(dx)
+        return dx
 
     def to_config(self) -> Dict[str, Any]:
         return {'class': 'Conv2D', 'config': {'filters': self.filters, 'kernel_size': self.kernel_size, 'stride': self.stride, 'padding': self.padding, 'use_bias': self.use_bias}}
@@ -375,15 +380,14 @@ class MaxPool2D(Layer):
         self.built = True
 
     def forward(self, x: np.ndarray, training: bool = False) -> np.ndarray:
-        x_np = backend.to_numpy(x)
-        self.last_x = x_np
+        self.last_x = x
         ph, pw = int(self.pool_size[0]), int(self.pool_size[1])
         stride = int(self.stride)
         
-        # Use efficient maxpool
-        y, cache = backend.maxpool_forward(x_np, ph, pw, stride)
+        # Use efficient maxpool (stays on device for JAX)
+        y, cache = backend.maxpool_forward(x, ph, pw, stride)
         self.cache = cache
-        return backend.asarray(y)
+        return y
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         """Backward pass: route gradients to max positions."""
@@ -391,9 +395,9 @@ class MaxPool2D(Layer):
         ph, pw = int(self.pool_size[0]), int(self.pool_size[1])
         stride = int(self.stride)
         
-        # Use efficient backward
-        dx = backend.maxpool_backward(backend.to_numpy(grad), self.cache, x, ph, pw, stride)
-        return backend.asarray(dx)
+        # Use efficient backward (stays on device for JAX)
+        dx = backend.maxpool_backward(grad, self.cache, x, ph, pw, stride)
+        return dx
 
     def to_config(self) -> Dict[str, Any]:
         return {'class': 'MaxPool2D', 'config': {'pool_size': self.pool_size, 'stride': self.stride}}

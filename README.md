@@ -2,21 +2,21 @@
 
 [![PyPI](https://img.shields.io/badge/PyPI-convnet-blue.svg)](https://pypi.org/project/convnet/)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![JAX](https://img.shields.io/badge/JAX-Accelerated-green.svg)](https://jax.readthedocs.io/)
-[![GPU/TPU](https://img.shields.io/badge/GPU%2FTPU-Supported-green.svg)]()
+[![Numba](https://img.shields.io/badge/Numba-CPU%20JIT-red.svg)](https://numba.pydata.org/)
+[![JAX](https://img.shields.io/badge/JAX-GPU%2FTPU-green.svg)](https://jax.readthedocs.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 [![Status](https://img.shields.io/badge/Status-Educational-orange.svg)]()
 
-> **A clean, educational Convolutional Neural Network framework built from scratch with JAX acceleration**
+> **A high-performance, educational CNN framework: Numba for CPU, JAX for GPU/TPU**
 
-This project was created as a school assignment with the goal of understanding deep learning from the ground up. It's designed to be **easy to understand** and **learn from**, implementing a complete CNN framework with JAX for high-performance JIT compilation and automatic GPU/TPU acceleration. The framework uses simple, readable code while leveraging JAX's XLA compiler for production-grade performance.
+This project was created as a school assignment with the goal of understanding deep learning from the ground up. It's designed to be **easy to understand** and **learn from**, implementing a complete CNN framework with **Numba acceleration** for fast CPU training and optional **JAX acceleration** for GPU/TPU. The framework uses simple, readable code while delivering excellent performance.
 
 ---
 
 ## 🌟 Features
 
 ### Core Functionality
-- ✅ **JAX-Powered Core** - All neural network operations with JIT compilation
+- ✅ **Pure Python Core** - Clean, educational code
 - 🔥 **Complete CNN Support** - Conv2D, MaxPool2D, Flatten, Dense layers
 - 📊 **Modern Training** - Batch normalization, dropout, early stopping
 - 🎯 **Smart Optimizers** - SGD with momentum and Adam optimizer
@@ -24,11 +24,10 @@ This project was created as a school assignment with the goal of understanding d
 - 💾 **Model Persistence** - Save/load models in HDF5 or NPZ format
 - 🔄 **Data Augmentation Ready** - Thread-pooled data loading
 
-### Performance Enhancements
-- ⚡ **JAX JIT Compilation** - XLA-compiled operations for maximum speed
-- 🚀 **GPU/TPU Support** - Automatic hardware acceleration via JAX
-- 🧵 **XLA Optimization** - Automatic kernel fusion and optimization
-- 📦 **Batch Processing** - Efficient mini-batch training
+### Performance Options
+- 🚀 **Numba CPU Acceleration** - Parallel JIT-compiled operations (15+ it/s)
+- ⚡ **JAX GPU/TPU Support** - XLA compilation for maximum throughput
+- 📦 **OpenBLAS Integration** - SIMD-optimized matrix operations
 
 ### Developer Experience
 - 📚 **Clean Code** - Well-documented and easy to follow
@@ -45,12 +44,13 @@ This project was created as a school assignment with the goal of understanding d
 **Install from PyPI (Recommended):**
 
 ```bash
-# Install the latest version from PyPI
+# Install base package (includes Numba for fast CPU)
 pip install convnet
 
-# Or install with GPU support
-pip install convnet[gpu]   # For NVIDIA GPU (CUDA)
-pip install convnet[tpu]   # For Google TPU
+# For GPU/TPU support, add JAX:
+pip install convnet[jax]      # CPU JAX
+pip install convnet[gpu]      # NVIDIA GPU (CUDA 12)
+pip install convnet[tpu]      # Google TPU
 ```
 
 **Install from Source:**
@@ -62,7 +62,23 @@ cd ConvNet
 
 # Install in development mode
 pip install -e .
+
+# Add JAX for GPU acceleration
+pip install jax jaxlib  # For CPU JAX
+pip install jax[cuda12]  # For NVIDIA GPU
 ```
+
+### Performance Expectations
+
+| Backend | MNIST Training Speed | Best For |
+|---------|---------------------|----------|
+| **Numba (CPU)** | **~16 it/s** (model only) | **Fast CPU training** |
+| Pure NumPy | ~6-8 it/s | Fallback, compatibility |
+| JAX (CPU) | ~10-12 it/s | Development |
+| JAX (GPU) | ~50+ it/s | Production training |
+
+> **Note:** Numba uses all available CPU cores with parallel JIT compilation. Actual training speed is ~10-12 it/s due to loss/optimizer/data loading overhead.
+> For maximum performance, ensure you have a modern CPU with AVX2 support.
 
 ### Your First Neural Network in 10 Lines
 

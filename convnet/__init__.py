@@ -1,7 +1,7 @@
-"""convnet - Educational CNN framework with JAX acceleration.
+"""convnet - Educational CNN framework with optional JAX/Numba acceleration.
 
 A minimal, clean CNN framework built from scratch for learning deep learning.
-Uses JAX for JIT compilation and optional GPU/TPU acceleration.
+Supports optional JAX for GPU/TPU acceleration or Numba for CPU acceleration.
 
 Quick Start:
     from convnet import Model, Dense, Conv2D, Activation, MaxPool2D, Flatten
@@ -16,7 +16,7 @@ Quick Start:
 from __future__ import annotations
 import os as _os
 
-__version__: str = "2.0.0"
+__version__: str = "2.0.1"
 __author__: str = "codinggamer-dev"
 __license__: str = "MIT"
 

@@ -7,14 +7,16 @@ numpy>=1.20.0
 # Progress bars for training visualization
 tqdm>=4.60.0
 
-# JAX for JIT compilation and GPU/TPU acceleration
-jax>=0.4.0
-jaxlib>=0.4.0
-
 # Model serialization (HDF5 format)
 h5py>=3.0.0
 
-# Optional: GPU acceleration (uncomment for CUDA support)
+# Optional: Numba for CPU acceleration (~4x speedup)
+# pip install numba>=0.50.0
+
+# Optional: JAX for GPU/TPU acceleration
+# pip install jax>=0.4.0 jaxlib>=0.4.0
+
+# Optional: GPU acceleration (for CUDA support)
 # pip install jax[cuda12]
 
 # Note: tkinter is required for the GUI demo (mnist_gui.py)

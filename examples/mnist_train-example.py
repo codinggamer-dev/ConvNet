@@ -59,7 +59,7 @@ def main():
     # Train
     history = model.fit(
         train,
-        epochs=50,
+        epochs=75,
         batch_size=128,
         num_classes=10,
         val_data=(X_val, y_val),
