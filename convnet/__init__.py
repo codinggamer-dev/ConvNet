@@ -16,21 +16,31 @@ Quick Start:
 from __future__ import annotations
 import os as _os
 
-__version__: str = "2.5.0"
+__version__: str = "2.5.1"
 __author__: str = "codinggamer-dev"
 __license__: str = "MIT"
 
 
 def _auto_configure_threads() -> None:
-    """Auto-configure thread counts for optimal performance."""
+    """Auto-configure thread counts for optimal performance.
+    
+    Supports Intel MKL, OpenBLAS, BLIS, and other BLAS libraries.
+    Intel MKL is recommended for Intel CPUs (i3, i5, i7, Xeon).
+    """
     if _os.environ.get('NN_DISABLE_AUTO_THREADS') == '1':
         return
     cores: int = _os.cpu_count() or 1
     # Set threading for various BLAS implementations
-    for var in ['OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 
-                'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS']:
+    # MKL (Intel Math Kernel Library) - best for Intel CPUs
+    # OpenBLAS - good open-source alternative
+    # BLIS - AMD-optimized BLAS
+    for var in ['MKL_NUM_THREADS', 'MKL_DYNAMIC', 'OMP_NUM_THREADS', 
+                'OPENBLAS_NUM_THREADS', 'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS']:
         if var not in _os.environ:
-            _os.environ[var] = str(cores)
+            if var == 'MKL_DYNAMIC':
+                _os.environ[var] = 'FALSE'  # Disable dynamic threading for consistent performance
+            else:
+                _os.environ[var] = str(cores)
 
 _auto_configure_threads()
 
