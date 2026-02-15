@@ -302,7 +302,8 @@ class Conv2D(Layer):
         kh, kw = self.kernel_size
         
         # Priority 1: Try OpenCV DNN with Winograd (fastest for 3x3 kernels)
-        if (self.stride == 1 and kh in [3, 5] and kw in [3, 5] and 
+        # Only use during inference - training needs im2col cache for backprop
+        if (not training and self.stride == 1 and kh in [3, 5] and kw in [3, 5] and 
             backend.is_opencv_available() and hasattr(backend, 'cv2_conv2d')):
             
             # Apply padding first
