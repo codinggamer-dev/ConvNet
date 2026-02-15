@@ -16,7 +16,7 @@ Quick Start:
 from __future__ import annotations
 import os as _os
 
-__version__: str = "2.4.1"
+__version__: str = "2.4.2"
 __author__: str = "codinggamer-dev"
 __license__: str = "MIT"
 
