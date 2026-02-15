@@ -111,8 +111,7 @@ def main():
     # Train
     print("Starting training...")
     print("TIP: EMNIST has 2x more data than MNIST - training takes longer")
-    print("Expected speed: 5-6 it/s during training (FFT/im2col)")
-    print("Note: OpenCV Winograd used only for inference (faster predictions)")
+    print("Expected speed: 8-12 it/s with OpenCV Winograd during training")
     print()
     history = model.fit(
         train,

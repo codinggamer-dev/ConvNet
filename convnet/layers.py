@@ -302,8 +302,7 @@ class Conv2D(Layer):
         kh, kw = self.kernel_size
         
         # Priority 1: Try OpenCV DNN with Winograd (fastest for 3x3 kernels)
-        # Only use during inference - training needs im2col cache for backprop
-        if (not training and self.stride == 1 and kh in [3, 5] and kw in [3, 5] and 
+        if (self.stride == 1 and kh in [3, 5] and kw in [3, 5] and 
             backend.is_opencv_available() and hasattr(backend, 'cv2_conv2d')):
             
             # Apply padding first
@@ -321,7 +320,8 @@ class Conv2D(Layer):
                 out = cv_result
                 if self.use_bias:
                     out = out + self.params['b']
-                self.cache = (None, None, None, None, None)  # No cache needed for cv2
+                # Cache for backward: will recompute im2col from last_x if needed
+                self.cache = ('opencv', None, None, None, None, x.shape)
                 return backend.to_numpy(out)
         
         # Priority 2: Try FFT convolution for 3x3+ kernels with stride=1
@@ -369,8 +369,8 @@ class Conv2D(Layer):
         """Backward pass: compute gradients and perform col2im."""
         cache_type = self.cache[0] if isinstance(self.cache[0], str) else 'im2col'
         
-        if cache_type == 'fft':
-            # FFT path: fall back to im2col for backward (still correct, just not FFT)
+        if cache_type == 'opencv' or cache_type == 'fft':
+            # OpenCV/FFT path: recompute im2col for backward from cached input
             _, _, _, _, _, padded_shape = self.cache
             cols, out_h, out_w, pads, _ = self._im2col(self.last_x)
             kh, kw = self.kernel_size
