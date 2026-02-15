@@ -8,7 +8,7 @@ Training samples: 60,000
 Test samples: 10,000
 
 Download: http://yann.lecun.com/exdb/mnist/
-Place .gz files in ./mnist_dataset/
+Place .gz files in the same directory as this script.
 """
 import os
 import sys
@@ -58,10 +58,9 @@ def main():
     
     # Load data
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    mnist_path = os.path.join(script_dir, 'mnist_dataset')
     
     print("Loading MNIST dataset...")
-    train_full, test = load_mnist_gz(mnist_path)
+    train_full, test = load_mnist_gz(script_dir)
     print(f"Training samples: {len(train_full)}")
     print(f"Test samples: {len(test)}")
     

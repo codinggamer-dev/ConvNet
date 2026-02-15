@@ -1,14 +1,14 @@
 """EMNIST Training Script
 
-Train a CNN on EMNIST handwritten letters.
+Train a CNN on EMNIST handwritten characters.
 
-Dataset: EMNIST Letters (28x28 grayscale images)
-Classes: 26 (letters A-Z)
-Training samples: ~124,800
-Test samples: ~20,800
+Dataset: EMNIST Balanced (28x28 grayscale images)
+Classes: 47 (digits, uppercase, lowercase)
+Training samples: ~112,800
+Test samples: ~18,800
 
 Download: https://www.nist.gov/itl/products-and-services/emnist-dataset
-Place .gz files in ./emnist_dataset/
+Place .gz files in the same directory as this script.
 """
 import os
 import sys
@@ -22,7 +22,7 @@ from convnet import jax_backend as backend
 from convnet.data import load_dataset_gz
 
 
-def build_model(num_classes: int = 26) -> Model:
+def build_model(num_classes: int = 47) -> Model:
     """Build CNN for EMNIST classification.
     
     Architecture:
@@ -32,7 +32,7 @@ def build_model(num_classes: int = 26) -> Model:
     - Dense(num_classes)
     
     Args:
-        num_classes: Number of classes (26 for Letters, 47 for Balanced, 62 for ByClass)
+        num_classes: Number of classes (47 for Balanced, 62 for ByClass, 26 for Letters)
         
     Returns:
         Configured model
@@ -51,7 +51,7 @@ def build_model(num_classes: int = 26) -> Model:
 def main():
     """Main training loop."""
     print("=" * 60)
-    print("EMNIST Letter Recognition Training")
+    print("EMNIST Character Recognition Training")
     print("=" * 60)
     print(f"Backend: {backend.get_device_name()}")
     if backend.is_numexpr_available():
@@ -61,15 +61,14 @@ def main():
     
     # Load data
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    emnist_path = os.path.join(script_dir, 'emnist_dataset')
     
-    print("Loading EMNIST Letters dataset...")
+    print("Loading EMNIST Balanced dataset...")
     train_full, test = load_dataset_gz(
-        emnist_path,
-        train_images_file='emnist-letters-train-images-idx3-ubyte.gz',
-        train_labels_file='emnist-letters-train-labels-idx1-ubyte.gz',
-        test_images_file='emnist-letters-test-images-idx3-ubyte.gz',
-        test_labels_file='emnist-letters-test-labels-idx1-ubyte.gz'
+        script_dir,
+        train_images_file='emnist-balanced-train-images-idx3-ubyte.gz',
+        train_labels_file='emnist-balanced-train-labels-idx1-ubyte.gz',
+        test_images_file='emnist-balanced-test-images-idx3-ubyte.gz',
+        test_labels_file='emnist-balanced-test-labels-idx1-ubyte.gz'
     )
     
     # Auto-detect number of classes
