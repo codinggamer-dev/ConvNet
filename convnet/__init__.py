@@ -16,7 +16,7 @@ Quick Start:
 from __future__ import annotations
 import os as _os
 
-__version__: str = "2.4.3"
+__version__: str = "2.4.4"
 __author__: str = "codinggamer-dev"
 __license__: str = "MIT"
 
@@ -26,7 +26,9 @@ def _auto_configure_threads() -> None:
     if _os.environ.get('NN_DISABLE_AUTO_THREADS') == '1':
         return
     cores: int = _os.cpu_count() or 1
-    for var in ['OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS']:
+    # Set threading for various BLAS implementations
+    for var in ['OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 
+                'BLIS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS']:
         if var not in _os.environ:
             _os.environ[var] = str(cores)
 

@@ -4,11 +4,19 @@ Train a CNN on EMNIST handwritten characters.
 
 Dataset: EMNIST Balanced (28x28 grayscale images)
 Classes: 47 (digits, uppercase, lowercase)
-Training samples: ~112,800
+Training samples: ~112,800 (2x more than MNIST)
 Test samples: ~18,800
 
 Download: https://www.nist.gov/itl/products-and-services/emnist-dataset
 Place .gz files in the same directory as this script.
+
+Performance Notes:
+- EMNIST has 2x more data than MNIST - expect 2x longer training
+- Typical speed on Intel i3-6006U: 3-5 it/s
+- Tips to speed up:
+  * Reduce epochs (e.g., epochs=10 for testing)
+  * Use smaller model (fewer filters)
+  * Use subset of data for experimentation
 """
 import os
 import sys
@@ -102,11 +110,13 @@ def main():
     
     # Train
     print("Starting training...")
+    print("TIP: EMNIST has 2x more data than MNIST - training takes longer")
+    print("Expected speed: 3-5 it/s on Intel i3-6006U (slower CPU)")
     print()
     history = model.fit(
         train,
         epochs=50,
-        batch_size=64,
+        batch_size=128,  # Larger batches = better CPU utilization
         num_classes=num_classes,
         num_threads=4,
         val_data=(X_val, y_val),
