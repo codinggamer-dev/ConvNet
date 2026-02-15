@@ -93,7 +93,7 @@ def main():
     history = model.fit(
         train,
         epochs=50,
-        batch_size=128,  # Larger batches = better throughput
+        batch_size=64,  # Optimized for 3MB L3 cache
         num_classes=10,
         num_threads=4,
         val_data=(X_val, y_val),

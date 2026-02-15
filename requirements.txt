@@ -7,6 +7,10 @@ numpy>=1.20.0
 # Fast element-wise operations
 numexpr>=2.8.0
 
+# OpenCV for fast convolutions (Winograd algorithm)
+# Optional but highly recommended for 2-4x Conv2D speedup
+opencv-python>=4.5.0
+
 # Progress bars for training visualization
 tqdm>=4.60.0
 

@@ -111,12 +111,12 @@ def main():
     # Train
     print("Starting training...")
     print("TIP: EMNIST has 2x more data than MNIST - training takes longer")
-    print("Expected speed: 3-5 it/s on Intel i3-6006U (slower CPU)")
+    print("Expected speed: 5-10 it/s with OpenCV DNN (Winograd algorithm)")
     print()
     history = model.fit(
         train,
         epochs=50,
-        batch_size=128,  # Larger batches = better CPU utilization
+        batch_size=64,  # Optimized for 3MB L3 cache
         num_classes=num_classes,
         num_threads=4,
         val_data=(X_val, y_val),

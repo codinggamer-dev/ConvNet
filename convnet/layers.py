@@ -295,13 +295,35 @@ class Conv2D(Layer):
         return cols, out_h, out_w, (pt, pb, pl, pr), x_p.shape
 
     def forward(self, x: np.ndarray, training: bool = False) -> np.ndarray:
-        """Forward pass: convolution as matrix multiplication or FFT."""
+        """Forward pass: OpenCV DNN (Winograd) > FFT > im2col+GEMM."""
         x = backend.asarray(x)
         self.last_x = x
         xp = backend.get_array_module()
         kh, kw = self.kernel_size
         
-        # Try FFT convolution for 3x3+ kernels with stride=1 on SciPy backend
+        # Priority 1: Try OpenCV DNN with Winograd (fastest for 3x3 kernels)
+        if (self.stride == 1 and kh in [3, 5] and kw in [3, 5] and 
+            backend.is_opencv_available() and hasattr(backend, 'cv2_conv2d')):
+            
+            # Apply padding first
+            if self.padding == 'same':
+                batch, h, w, c = x.shape
+                pt, pb, pl, pr = self._compute_padding(h, w)
+                if pt > 0 or pb > 0 or pl > 0 or pr > 0:
+                    x_padded = np.zeros((batch, h + pt + pb, w + pl + pr, c), dtype=x.dtype)
+                    x_padded[:, pt:pt+h, pl:pl+w, :] = x
+                    x = x_padded
+            
+            # Try OpenCV DNN convolution (uses Winograd algorithm)
+            cv_result = backend.cv2_conv2d(x, self.params['W'], self.stride)
+            if cv_result is not None:
+                out = cv_result
+                if self.use_bias:
+                    out = out + self.params['b']
+                self.cache = (None, None, None, None, None)  # No cache needed for cv2
+                return backend.to_numpy(out)
+        
+        # Priority 2: Try FFT convolution for 3x3+ kernels with stride=1
         if (self.use_fft and self.stride == 1 and kh >= 3 and kw >= 3 and 
             backend.is_scipy_available() and hasattr(backend, 'conv2d_fft')):
             

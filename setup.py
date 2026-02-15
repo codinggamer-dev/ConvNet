@@ -12,7 +12,7 @@ license_text = "MIT" if license_file.exists() else ""
 
 setup(
     name="convnet",
-    version="2.4.4",
+    version="2.5.0",
     author="codinggamer-dev",
     author_email="ege.tba1940@gmail.com",
     description="A high-performance CNN framework: SciPy for CPU optimization, JAX for GPU/TPU",
@@ -45,6 +45,7 @@ setup(
         "tqdm>=4.60.0",
         "h5py>=3.0.0",
         "numexpr>=2.8.0",
+        "opencv-python>=4.5.0",
     ],
     extras_require={
         "jax": ["jax>=0.4.0", "jaxlib>=0.4.0"],
