@@ -55,3 +55,6 @@ htmlcov/
 # Misc
 *.tmp
 *.bak
+
+# Build/publish scripts
+build-publish.sh

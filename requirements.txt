@@ -4,14 +4,17 @@
 # Essential numerical computing
 numpy>=1.20.0
 
+# Fast element-wise operations
+numexpr>=2.8.0
+
 # Progress bars for training visualization
 tqdm>=4.60.0
 
 # Model serialization (HDF5 format)
 h5py>=3.0.0
 
-# Optional: Numba for CPU acceleration (~4x speedup)
-# pip install numba>=0.50.0
+# CPU optimization - FFT-based convolution (highly recommended)
+scipy>=1.7.0
 
 # Optional: JAX for GPU/TPU acceleration
 # pip install jax>=0.4.0 jaxlib>=0.4.0
@@ -19,7 +22,7 @@ h5py>=3.0.0
 # Optional: GPU acceleration (for CUDA support)
 # pip install jax[cuda12]
 
-# Note: tkinter is required for the GUI demo (mnist_gui.py)
+# Note: tkinter is required for the GUI demo (mnist_gui.py, emnist_gui.py)
 # It's usually included with Python, but on some Linux distributions:
 # Ubuntu/Debian: sudo apt-get install python3-tk
 # Fedora: sudo dnf install python3-tkinter

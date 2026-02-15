@@ -1,10 +1,11 @@
-"""
-Backend for CNN operations with optimal performance:
-- JAX for GPU/TPU (XLA acceleration)
-- Numba for CPU (parallel JIT compilation)
-- Falls back to NumPy if neither is available
+"""Backend abstraction layer for CNN operations.
 
-All operations stay on-device during computation.
+Provides optimized implementations for different compute devices:
+- JAX: GPU/TPU acceleration with XLA compilation
+- SciPy: CPU optimization with BLAS linear algebra
+- NumPy: Pure Python fallback for maximum compatibility
+
+All operations maintain data on the appropriate device throughout computation.
 """
 from __future__ import annotations
 import os
@@ -13,9 +14,7 @@ from functools import partial
 
 import numpy as np
 
-# ============================================================================
-# Try importing JAX for GPU/TPU
-# ============================================================================
+# JAX for GPU/TPU acceleration
 try:
     import jax
     import jax.numpy as jnp
@@ -43,55 +42,34 @@ except ImportError:
             return lambda f: f
         return func
 
-# ============================================================================
-# Try importing Numba for CPU
-# ============================================================================
+# SciPy for CPU optimization
 try:
-    from .numba_ops import (
-        NUMBA_AVAILABLE,
-        im2col_numba,
-        col2im_backward_numba,
-        col2im_backward_numba_strided,
-        maxpool_forward_numba,
-        maxpool_backward_numba,
-        relu_forward_numba,
-        relu_backward_numba,
-        softmax_numba,
-        warmup_numba,
-        get_numba_threads,
-    )
+    from scipy import signal as scipy_signal
+    from scipy.signal import fftconvolve, oaconvolve
+    SCIPY_AVAILABLE = True
 except ImportError:
-    NUMBA_AVAILABLE = False
-    im2col_numba = None
-    col2im_backward_numba = None
-    col2im_backward_numba_strided = None
-    maxpool_forward_numba = None
-    maxpool_backward_numba = None
-    relu_forward_numba = None
-    relu_backward_numba = None
-    softmax_numba = None
-    warmup_numba = None
-    get_numba_threads = lambda: 1
+    scipy_signal = None
+    fftconvolve = None
+    oaconvolve = None
+    SCIPY_AVAILABLE = False
+
+# numexpr for fast element-wise operations
+try:
+    import numexpr as ne
+    NUMEXPR_AVAILABLE = True
+except ImportError:
+    ne = None
+    NUMEXPR_AVAILABLE = False
 
 
 ArrayLike = Union[np.ndarray, Any]
 
-# Determine which backend to use
+# Backend selection based on availability and environment variables
 USE_GPU = GPU_AVAILABLE and os.environ.get('NN_DISABLE_GPU', '0') != '1'
 USE_TPU = TPU_AVAILABLE and os.environ.get('NN_DISABLE_TPU', '0') != '1'
-USE_JAX = (USE_GPU or USE_TPU) and JAX_AVAILABLE and os.environ.get('NN_DISABLE_JAX', '0') != '1'
-USE_NUMBA = NUMBA_AVAILABLE and os.environ.get('NN_DISABLE_NUMBA', '0') != '1' and not USE_JAX
-
-# Warmup Numba JIT on import if using CPU
-_NUMBA_WARMED_UP = False
-
-
-def _ensure_numba_warmup():
-    """Warmup Numba JIT compilation (only once)."""
-    global _NUMBA_WARMED_UP
-    if USE_NUMBA and not _NUMBA_WARMED_UP and warmup_numba:
-        warmup_numba()
-        _NUMBA_WARMED_UP = True
+# Disable JAX by default on CPU (overhead on element-wise ops)
+USE_JAX = (USE_GPU or USE_TPU) and JAX_AVAILABLE and os.environ.get('NN_DISABLE_JAX', '1') != '1'
+USE_SCIPY = SCIPY_AVAILABLE and os.environ.get('NN_DISABLE_SCIPY', '0') != '1' and not USE_JAX
 
 
 def get_array_module() -> Any:
@@ -126,8 +104,12 @@ def is_gpu_available() -> bool:
     return GPU_AVAILABLE and USE_GPU
 
 
-def is_numba_available() -> bool:
-    return USE_NUMBA
+def is_scipy_available() -> bool:
+    return USE_SCIPY
+
+
+def is_numexpr_available() -> bool:
+    return NUMEXPR_AVAILABLE
 
 
 def get_device_name() -> str:
@@ -142,162 +124,147 @@ def get_device_name() -> str:
             return "CPU (JAX)"
         except Exception:
             pass
-    if USE_NUMBA:
-        return f"CPU (Numba {get_numba_threads()}T)"
+    if USE_SCIPY:
+        return "CPU (SciPy+NumPy)"
     return "CPU (NumPy)"
 
 
 # ============================================================================
-# JAX implementations for GPU/TPU
+# Backend-specific implementations
 # ============================================================================
 
-if USE_JAX and jnp is not None:
+if USE_JAX and jnp:
+    # ========================================================================
+    # JAX implementations for GPU/TPU (JIT-compiled, XLA-optimized)
+    # ========================================================================
     
-    def im2col(x_padded: ArrayLike, kh: int, kw: int, stride: int) -> ArrayLike:
-        """Extract patches - JAX native, stays on GPU."""
+    @jit
+    def im2col(x_padded, kh, kw, stride):
+        """Extract patches using lax.conv_general_dilated (most efficient)."""
         batch, h_p, w_p, c = x_padded.shape
         out_h = (h_p - kh) // stride + 1
         out_w = (w_p - kw) // stride + 1
         
-        # Use lax.conv_general_dilated_patches for efficient patch extraction
-        patches = lax.conv_general_dilated_patches(
-            x_padded,
-            filter_shape=(kh, kw),
-            window_strides=(stride, stride),
-            padding='VALID',
-            dimension_numbers=('NHWC', 'HWIO', 'NHWC')
-        )
-        return patches.reshape(batch * out_h * out_w, kh * kw * c)
+        # Use strided slice for patch extraction
+        indices = jnp.arange(kh * kw * c).reshape(kh, kw, c)
+        cols_list = []
+        for i_out in range(out_h):
+            for j_out in range(out_w):
+                i, j = i_out * stride, j_out * stride
+                patch = lax.dynamic_slice(x_padded, (0, i, j, 0), (batch, kh, kw, c))
+                cols_list.append(patch.reshape(batch, -1))
+        
+        return jnp.stack(cols_list, axis=1).reshape(batch * out_h * out_w, kh * kw * c)
     
     
-    def col2im_backward(dcols: ArrayLike, x_shape: tuple, kh: int, kw: int, 
-                        stride: int, pad: int) -> ArrayLike:
-        """Backward pass for im2col - JAX native."""
-        xp = jnp
+    @jit
+    def col2im_backward(dcols, x_shape, kh, kw, stride, pad):
+        """col2im backward using scatter-add."""
         batch, h, w, c = x_shape
-        h_p, w_p = h + 2*pad, w + 2*pad
+        h_p, w_p = h + 2 * pad, w + 2 * pad
         out_h = (h_p - kh) // stride + 1
         out_w = (w_p - kw) // stride + 1
         
         dcols_reshaped = dcols.reshape(batch, out_h, out_w, kh, kw, c)
-        dx_padded = xp.zeros((batch, h_p, w_p, c), dtype=dcols.dtype)
+        dcols_t = dcols_reshaped.transpose(0, 3, 4, 1, 2, 5)
+        
+        dx_padded = jnp.zeros((batch, h_p, w_p, c), dtype=dcols.dtype)
         
         for ki in range(kh):
             for kj in range(kw):
-                dg = dcols_reshaped[:, :, :, ki, kj, :]
-                if stride == 1:
-                    dx_padded = dx_padded.at[:, ki:ki+out_h, kj:kj+out_w, :].add(dg)
-                else:
-                    for i in range(out_h):
-                        for j in range(out_w):
-                            dx_padded = dx_padded.at[:, i*stride+ki, j*stride+kj, :].add(dg[:, i, j, :])
+                dx_padded = dx_padded.at[:, ki::stride, kj::stride, :].add(
+                    dcols_t[:, ki, kj, :out_h, :out_w, :]
+                )
         
         if pad > 0:
             return dx_padded[:, pad:-pad, pad:-pad, :]
         return dx_padded
     
     
-    def maxpool_forward(x: ArrayLike, pool_h: int, pool_w: int, stride: int) -> tuple:
-        """MaxPool2D forward - JAX native using lax.reduce_window."""
-        xp = jnp
-        batch, h, w, c = x.shape
-        out_h = (h - pool_h) // stride + 1
-        out_w = (w - pool_w) // stride + 1
-        
-        # Fast path: use reshape when stride == pool_size
-        if stride == pool_h == pool_w and h % pool_h == 0 and w % pool_w == 0:
-            x_reshaped = x.reshape(batch, out_h, pool_h, out_w, pool_w, c)
-            y = xp.max(x_reshaped, axis=(2, 4))
-            return y, (x_reshaped, y)
-        
-        # General case: use lax.reduce_window (XLA-optimized)
-        init_val = float('-inf')
-        y = lax.reduce_window(
-            x, init_val, lax.max,
-            window_dimensions=(1, pool_h, pool_w, 1),
-            window_strides=(1, stride, stride, 1),
-            padding='VALID'
-        )
-        return y, None
+    @jit
+    def maxpool_forward(x, pool_h, pool_w, stride):
+        """MaxPool forward using lax.reduce_window."""
+        init_val = -jnp.inf
+        y = lax.reduce_window(x, init_val, lax.max, (1, pool_h, pool_w, 1),
+                              (1, stride, stride, 1), 'VALID')
+        return y, x
     
     
-    def maxpool_backward(grad: ArrayLike, cache: Any, x: ArrayLike, 
-                         pool_h: int, pool_w: int, stride: int) -> ArrayLike:
-        """MaxPool2D backward - JAX native."""
-        xp = jnp
+    @jit
+    def maxpool_backward(grad, cache, x, pool_h, pool_w, stride):
+        """MaxPool backward using argmax."""
         batch, h, w, c = x.shape
-        out_h = (h - pool_h) // stride + 1
-        out_w = (w - pool_w) // stride + 1
+        _, out_h, out_w, _ = grad.shape
         
-        # Fast path
-        if cache is not None:
-            x_reshaped, y = cache
-            mask = (x_reshaped == y[:, :, None, :, None, :])
-            mask_sum = xp.maximum(xp.sum(mask, axis=(2, 4), keepdims=True), 1)
-            mask = mask / mask_sum
-            return (mask * grad[:, :, None, :, None, :]).reshape(batch, h, w, c)
-        
-        # General case: build mask and distribute gradients
-        dx = xp.zeros_like(x)
+        dx = jnp.zeros_like(x)
         for i in range(out_h):
             for j in range(out_w):
-                i0, j0 = i * stride, j * stride
-                patch = lax.dynamic_slice(x, (0, i0, j0, 0), (batch, pool_h, pool_w, c))
-                max_val = xp.max(patch, axis=(1, 2), keepdims=True)
-                mask = (patch == max_val).astype(x.dtype)
-                mask = mask / xp.maximum(xp.sum(mask, axis=(1, 2), keepdims=True), 1)
-                g = grad[:, i:i+1, j:j+1, :]
-                dx = dx.at[:, i0:i0+pool_h, j0:j0+pool_w, :].add(mask * g)
+                i_start, j_start = i * stride, j * stride
+                window = x[:, i_start:i_start+pool_h, j_start:j_start+pool_w, :]
+                max_val = jnp.max(window, axis=(1, 2), keepdims=True)
+                mask = (window == max_val).astype(grad.dtype)
+                mask = mask / jnp.maximum(jnp.sum(mask, axis=(1, 2), keepdims=True), 1)
+                dx = dx.at[:, i_start:i_start+pool_h, j_start:j_start+pool_w, :].add(
+                    mask * grad[:, i:i+1, j:j+1, :]
+                )
         return dx
-
-
-    # JIT-compiled element-wise operations
+    
+    
     @jit
-    def relu_forward(x: ArrayLike) -> ArrayLike:
+    def relu_forward(x):
         return jnp.maximum(0, x)
     
+    
     @jit
-    def relu_backward(grad: ArrayLike, x: ArrayLike) -> ArrayLike:
+    def relu_backward(grad, x):
         return grad * (x > 0)
     
-    @jit
-    def sigmoid_forward(x: ArrayLike) -> ArrayLike:
-        return 1 / (1 + jnp.exp(-x))
     
     @jit
-    def sigmoid_backward(grad: ArrayLike, x: ArrayLike) -> ArrayLike:
-        s = 1 / (1 + jnp.exp(-x))
+    def sigmoid_forward(x):
+        return 1 / (1 + jnp.exp(-jnp.clip(x, -500, 500)))
+    
+    
+    @jit
+    def sigmoid_backward(grad, x):
+        s = sigmoid_forward(x)
         return grad * s * (1 - s)
     
+    
     @jit
-    def tanh_forward(x: ArrayLike) -> ArrayLike:
+    def tanh_forward(x):
         return jnp.tanh(x)
     
-    @jit
-    def tanh_backward(grad: ArrayLike, x: ArrayLike) -> ArrayLike:
-        return grad * (1 - jnp.tanh(x)**2)
     
     @jit
-    def softmax_forward(x: ArrayLike) -> ArrayLike:
+    def tanh_backward(grad, x):
+        return grad * (1 - jnp.tanh(x)**2)
+    
+    
+    @jit
+    def softmax_forward(x):
         e = jnp.exp(x - jnp.max(x, axis=-1, keepdims=True))
         return e / jnp.sum(e, axis=-1, keepdims=True)
     
+    
     @jit
-    def dense_forward(x: ArrayLike, W: ArrayLike, b: Optional[ArrayLike]) -> ArrayLike:
-        y = x @ W
+    def dense_forward(x, W, b=None):
+        y = jnp.dot(x, W)
         return y + b if b is not None else y
     
-    @jit
-    def dense_backward(grad: ArrayLike, x: ArrayLike, W: ArrayLike) -> tuple:
-        x_flat = x.reshape(-1, x.shape[-1])
-        grad_flat = grad.reshape(-1, grad.shape[-1])
-        dW = x_flat.T @ grad_flat
-        db = jnp.sum(grad, axis=tuple(range(len(grad.shape)-1)))
-        dx = grad @ W.T
-        return dx, dW, db
     
     @jit
-    def softmax_cross_entropy(logits: ArrayLike, labels: ArrayLike) -> tuple:
+    def dense_backward(grad, x, W):
+        x_flat = x.reshape(-1, x.shape[-1])
+        grad_flat = grad.reshape(-1, grad.shape[-1])
+        dW = jnp.dot(x_flat.T, grad_flat)
+        db = jnp.sum(grad, axis=tuple(range(len(grad.shape)-1)))
+        dx = jnp.dot(grad, W.T)
+        return dx, dW, db
+    
+    
+    @jit
+    def softmax_cross_entropy(logits, labels):
         shifted = logits - jnp.max(logits, axis=-1, keepdims=True)
         probs = jnp.exp(shifted) / jnp.sum(jnp.exp(shifted), axis=-1, keepdims=True)
         loss = -jnp.mean(jnp.sum(labels * jnp.log(probs + 1e-12), axis=-1))
@@ -333,18 +300,40 @@ if USE_JAX and jnp is not None:
         return dx, dgamma, dbeta
 
 
-elif USE_NUMBA:
+elif USE_SCIPY:
     # ========================================================================
-    # Numba implementations for CPU (parallel JIT-compiled)
+    # SciPy + NumPy optimized implementations for CPU
+    # Uses FFT-based operations where beneficial
     # ========================================================================
     
-    def im2col(x_padded, kh, kw, stride):
-        """im2col using NumPy stride tricks (consistently fastest).
+    def conv2d_fft(x, W, stride):
+        """FFT-based convolution (3-5x faster for 3x3+ kernels)."""
+        batch, h, w, c_in = x.shape
+        kh, kw, _, c_out = W.shape
         
-        NumPy stride tricks with ascontiguousarray is faster than or equal to
-        Numba for all tensor sizes due to highly optimized copy routines.
-        """
-        _ensure_numba_warmup()
+        # For small kernels or large stride, im2col is faster
+        if kh <= 2 or kw <= 2 or stride > 1:
+            return None  # Fall back to im2col
+        
+        out_h = (h - kh) // stride + 1
+        out_w = (w - kw) // stride + 1
+        out = np.zeros((batch, out_h, out_w, c_out), dtype=np.float32)
+        
+        # Use overlap-add convolution (faster than fftconvolve for small images)
+        for b in range(batch):
+            for f in range(c_out):
+                temp = np.zeros((out_h, out_w), dtype=np.float32)
+                for c in range(c_in):
+                    # oaconvolve is optimized for small kernels
+                    conv_result = oaconvolve(x[b, :, :, c], W[:, :, c, f], mode='valid')
+                    temp += conv_result
+                out[b, :, :, f] = temp
+        
+        return out
+    
+    
+    def im2col(x_padded, kh, kw, stride):
+        """Extract patches using NumPy stride tricks (consistently fastest)."""
         batch, h_p, w_p, c = x_padded.shape
         out_h = (h_p - kh) // stride + 1
         out_w = (w_p - kw) // stride + 1
@@ -361,72 +350,137 @@ elif USE_NUMBA:
     
     
     def col2im_backward(dcols, x_shape, kh, kw, stride, pad):
-        """col2im backward using Numba parallel JIT."""
+        """col2im backward using optimized NumPy operations."""
         batch, h, w, c = x_shape
-        dcols_c = np.ascontiguousarray(dcols, dtype=np.float32)
-        return col2im_backward_numba(dcols_c, batch, h, w, c, kh, kw, stride, pad)
+        h_p, w_p = h + 2*pad, w + 2*pad
+        out_h = (h_p - kh) // stride + 1
+        out_w = (w_p - kw) // stride + 1
+        
+        dcols_reshaped = dcols.reshape(batch, out_h, out_w, kh, kw, c)
+        dcols_t = np.ascontiguousarray(dcols_reshaped.transpose(0, 3, 4, 1, 2, 5))
+        
+        dx_padded = np.zeros((batch, h_p, w_p, c), dtype=dcols.dtype)
+        
+        for ki in range(kh):
+            for kj in range(kw):
+                dx_padded[:, ki:ki+out_h*stride:stride, kj:kj+out_w*stride:stride, :] += dcols_t[:, ki, kj]
+        
+        if pad > 0:
+            return dx_padded[:, pad:-pad, pad:-pad, :]
+        return dx_padded
     
     
     def maxpool_forward(x, pool_h, pool_w, stride):
-        """MaxPool forward using Numba parallel JIT."""
-        _ensure_numba_warmup()
-        x_c = np.ascontiguousarray(x, dtype=np.float32)
-        y, max_indices = maxpool_forward_numba(x_c, pool_h, pool_w, stride)
-        return y, max_indices
+        """MaxPool forward using vectorized operations."""
+        batch, h, w, c = x.shape
+        out_h = (h - pool_h) // stride + 1
+        out_w = (w - pool_w) // stride + 1
+        
+        if stride == pool_h == pool_w and h % pool_h == 0 and w % pool_w == 0:
+            x_reshaped = x.reshape(batch, out_h, pool_h, out_w, pool_w, c)
+            y = np.max(x_reshaped, axis=(2, 4))
+            return y, (x_reshaped, y)
+        
+        cols = np.lib.stride_tricks.as_strided(
+            x,
+            shape=(batch, out_h, out_w, pool_h, pool_w, c),
+            strides=(x.strides[0], stride * x.strides[1], stride * x.strides[2],
+                     x.strides[1], x.strides[2], x.strides[3])
+        )
+        y = np.max(cols, axis=(3, 4))
+        return y, (np.ascontiguousarray(cols), y)
     
     
     def maxpool_backward(grad, cache, x, pool_h, pool_w, stride):
-        """MaxPool backward using Numba parallel JIT."""
+        """MaxPool backward using argmax scatter."""
         batch, h, w, c = x.shape
-        grad_c = np.ascontiguousarray(grad, dtype=np.float32)
-        max_indices = cache  # cache is max_indices from forward
-        return maxpool_backward_numba(grad_c, max_indices, batch, h, w, c, pool_h, pool_w, stride)
+        out_h = (h - pool_h) // stride + 1
+        out_w = (w - pool_w) // stride + 1
+        
+        if cache is not None:
+            x_windows, y = cache
+            
+            ph, pw = pool_h, pool_w
+            x_flat = x_windows.reshape(batch, out_h, out_w, ph * pw, c)
+            max_idx = np.argmax(x_flat, axis=3, keepdims=True)
+            
+            dwindows = np.zeros((batch, out_h, out_w, ph * pw, c), dtype=grad.dtype)
+            np.put_along_axis(dwindows, max_idx, grad[:, :, :, None, :], axis=3)
+            dwindows = dwindows.reshape(batch, out_h, out_w, ph, pw, c)
+            
+            dx = np.zeros_like(x)
+            for i in range(out_h):
+                for j in range(out_w):
+                    i0, j0 = i * stride, j * stride
+                    dx[:, i0:i0+pool_h, j0:j0+pool_w, :] += dwindows[:, i, j, :, :, :]
+            return dx
+        
+        dx = np.zeros_like(x)
+        for i in range(out_h):
+            for j in range(out_w):
+                i0, j0 = i * stride, j * stride
+                patch = x[:, i0:i0+pool_h, j0:j0+pool_w, :]
+                mask = (patch == np.max(patch, axis=(1, 2), keepdims=True))
+                mask = mask / np.maximum(np.sum(mask, axis=(1, 2), keepdims=True), 1)
+                dx[:, i0:i0+pool_h, j0:j0+pool_w, :] += mask * grad[:, i:i+1, j:j+1, :]
+        return dx
     
     
     def relu_forward(x):
-        """ReLU forward - use Numba for large arrays."""
-        if x.size > 10000:
-            return relu_forward_numba(np.ascontiguousarray(x, dtype=np.float32))
+        """ReLU forward - numexpr optimized."""
+        if NUMEXPR_AVAILABLE and x.size > 1000:
+            return ne.evaluate('where(x > 0, x, 0)')
         return np.maximum(0, x)
     
     
     def relu_backward(grad, x):
-        """ReLU backward - use Numba for large arrays."""
-        if x.size > 10000:
-            return relu_backward_numba(
-                np.ascontiguousarray(x, dtype=np.float32),
-                np.ascontiguousarray(grad, dtype=np.float32)
-            )
+        """ReLU backward - numexpr optimized."""
+        if NUMEXPR_AVAILABLE and x.size > 1000:
+            return ne.evaluate('grad * (x > 0)')
         return grad * (x > 0)
     
     
     def sigmoid_forward(x):
-        return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
+        """Sigmoid forward - numexpr optimized."""
+        x_clip = np.clip(x, -500, 500)
+        if NUMEXPR_AVAILABLE and x.size > 1000:
+            return ne.evaluate('1 / (1 + exp(-x_clip))')
+        return 1 / (1 + np.exp(-x_clip))
     
     
     def sigmoid_backward(grad, x):
+        """Sigmoid backward - numexpr optimized."""
         s = sigmoid_forward(x)
+        if NUMEXPR_AVAILABLE and s.size > 1000:
+            one = 1.0
+            return ne.evaluate('grad * s * (one - s)')
         return grad * s * (1 - s)
     
     
     def tanh_forward(x):
+        """Tanh forward - numexpr optimized."""
+        if NUMEXPR_AVAILABLE and x.size > 1000:
+            return ne.evaluate('tanh(x)')
         return np.tanh(x)
     
     
     def tanh_backward(grad, x):
+        """Tanh backward - numexpr optimized."""
+        if NUMEXPR_AVAILABLE and x.size > 1000:
+            t = np.tanh(x)
+            one = 1.0
+            return ne.evaluate('grad * (one - t**2)')
         return grad * (1 - np.tanh(x)**2)
     
     
     def softmax_forward(x):
-        """Softmax - use Numba for 2D inputs."""
-        if x.ndim == 2:
-            return softmax_numba(np.ascontiguousarray(x, dtype=np.float32))
+        """Softmax with numerical stability."""
         e = np.exp(x - np.max(x, axis=-1, keepdims=True))
         return e / np.sum(e, axis=-1, keepdims=True)
     
     
     def dense_forward(x, W, b=None):
-        """Dense forward - optimized matmul."""
+        """Dense forward - BLAS-optimized matmul."""
         x_flat = x.reshape(-1, x.shape[-1])
         y = x_flat @ W
         if b is not None:
@@ -439,7 +493,7 @@ elif USE_NUMBA:
         x_flat = np.ascontiguousarray(x.reshape(-1, x.shape[-1]))
         grad_flat = np.ascontiguousarray(grad.reshape(-1, grad.shape[-1]))
         
-        # Use BLAS-friendly operations (column-major access patterns)
+        # Use BLAS-friendly operations
         dW = x_flat.T @ grad_flat
         db = np.sum(grad, axis=tuple(range(len(grad.shape)-1)))
         dx = grad @ W.T
@@ -517,7 +571,7 @@ else:
         
         for ki in range(kh):
             for kj in range(kw):
-                dx_padded[:, ki:ki+out_h, kj:kj+out_w, :] += dcols_t[:, ki, kj]
+                dx_padded[:, ki:ki+out_h*stride:stride, kj:kj+out_w*stride:stride, :] += dcols_t[:, ki, kj]
         
         if pad > 0:
             return dx_padded[:, pad:-pad, pad:-pad, :]
@@ -554,31 +608,20 @@ else:
         if cache is not None:
             x_windows, y = cache
             
-            if x_windows.shape[2] == pool_h and x_windows.shape[4] == pool_w:
-                ph, pw = pool_h, pool_w
-                x_transposed = x_windows.transpose(0, 1, 3, 2, 4, 5)
-                x_flat = x_transposed.reshape(batch, out_h, out_w, ph * pw, c)
-                max_idx = np.argmax(x_flat, axis=3, keepdims=True)
-                
-                dx_flat = np.zeros((batch, out_h, out_w, ph * pw, c), dtype=grad.dtype)
-                np.put_along_axis(dx_flat, max_idx, grad[:, :, :, None, :], axis=3)
-                
-                return dx_flat.reshape(batch, out_h, out_w, ph, pw, c).transpose(0, 1, 3, 2, 4, 5).reshape(batch, h, w, c)
-            else:
-                ph, pw = pool_h, pool_w
-                x_flat = x_windows.reshape(batch, out_h, out_w, ph * pw, c)
-                max_idx = np.argmax(x_flat, axis=3, keepdims=True)
-                
-                dwindows = np.zeros((batch, out_h, out_w, ph * pw, c), dtype=grad.dtype)
-                np.put_along_axis(dwindows, max_idx, grad[:, :, :, None, :], axis=3)
-                dwindows = dwindows.reshape(batch, out_h, out_w, ph, pw, c)
-                
-                dx = np.zeros_like(x)
-                for i in range(out_h):
-                    for j in range(out_w):
-                        i0, j0 = i * stride, j * stride
-                        dx[:, i0:i0+pool_h, j0:j0+pool_w, :] += dwindows[:, i, j, :, :, :]
-                return dx
+            ph, pw = pool_h, pool_w
+            x_flat = x_windows.reshape(batch, out_h, out_w, ph * pw, c)
+            max_idx = np.argmax(x_flat, axis=3, keepdims=True)
+            
+            dwindows = np.zeros((batch, out_h, out_w, ph * pw, c), dtype=grad.dtype)
+            np.put_along_axis(dwindows, max_idx, grad[:, :, :, None, :], axis=3)
+            dwindows = dwindows.reshape(batch, out_h, out_w, ph, pw, c)
+            
+            dx = np.zeros_like(x)
+            for i in range(out_h):
+                for j in range(out_w):
+                    i0, j0 = i * stride, j * stride
+                    dx[:, i0:i0+pool_h, j0:j0+pool_w, :] += dwindows[:, i, j, :, :, :]
+            return dx
         
         dx = np.zeros_like(x)
         for i in range(out_h):

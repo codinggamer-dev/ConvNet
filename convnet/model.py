@@ -23,6 +23,8 @@ class Model:
         self.loss: Optional[Loss] = None
         self.optimizer: Optional[Optimizer] = None
         self._pending_weights: Optional[Dict[str, np.ndarray]] = None
+        self.mixed_precision: bool = False
+        self.compute_dtype: type = np.float32
 
     def add(self, layer: Layer) -> None:
         """Add a layer to the model."""
@@ -107,7 +109,7 @@ class Model:
         return xp.concatenate(outs, axis=0)
 
     def compile(self, loss: str, optimizer: str, weight_decay: float = 0.0, 
-                clip_norm: Optional[float] = None, **opt_kwargs: Any) -> None:
+                clip_norm: Optional[float] = None, mixed_precision: bool = False, **opt_kwargs: Any) -> None:
         """Configure the model for training.
         
         Args:
@@ -115,6 +117,7 @@ class Model:
             optimizer: Optimizer name ('sgd' or 'adam')
             weight_decay: L2 regularization strength (default: 0.0)
             clip_norm: Gradient clipping threshold (default: None)
+            mixed_precision: Use FP16 for forward pass, FP32 for gradients (experimental)
             **opt_kwargs: Additional optimizer parameters (e.g., lr, momentum)
             
         Raises:
@@ -127,6 +130,8 @@ class Model:
         
         self.loss = NAME2LOSS[loss]()
         self.optimizer = NAME2OPT[optimizer](**opt_kwargs)
+        self.mixed_precision = mixed_precision
+        self.compute_dtype = np.float16 if mixed_precision else np.float32
         
         # Configure regularization
         self.optimizer.configure(weight_decay=weight_decay, clip_norm=clip_norm)
@@ -138,7 +143,7 @@ class Model:
             patience: int = 10, min_delta: float = 0.0, 
             lr_schedule: Optional[str] = 'plateau', lr_factor: float = 0.5, 
             lr_patience: int = 5, lr_min: float = 1e-6, 
-            verbose: bool = True) -> Dict[str, List[Any]]:
+            verbose: bool = True, prefetch: int = 2, cache_batches: bool = False) -> Dict[str, List[Any]]:
         """Train the model on a dataset.
         
         Args:
@@ -157,6 +162,8 @@ class Model:
             lr_patience: Epochs to wait before reducing LR
             lr_min: Minimum learning rate
             verbose: Whether to print progress
+            prefetch: Number of batches to prefetch (0 to disable)
+            cache_batches: Cache preprocessed batches (uses more RAM)
             
         Returns:
             Dictionary with training history (loss, acc, val_acc, lr)
@@ -172,13 +179,19 @@ class Model:
         history: Dict[str, List[Any]] = {'loss': [], 'acc': [], 'val_acc': [], 'lr': []}
         
         for epoch in range(epochs):
+            # Reduce tqdm update frequency for speed
+            total_batches = (len(dataset) + batch_size - 1) // batch_size
             pbar = tqdm(
-                dataset.batches(batch_size, shuffle=True, num_threads=num_threads),
-                total=(len(dataset) + batch_size - 1) // batch_size,
-                desc=f"Epoch {epoch+1}/{epochs}"
+                dataset.batches(batch_size, shuffle=True, num_threads=num_threads, 
+                               prefetch=prefetch, cache=cache_batches),
+                total=total_batches,
+                desc=f"Epoch {epoch+1}/{epochs}",
+                mininterval=0.5,  # Update every 0.5s max (reduce overhead)
+                smoothing=0.1  # Smoother progress bar
             )
             losses: List[float] = []
             accs: List[float] = []
+            batch_count: int = 0
             
             for X, y in pbar:
                 # Convert labels to one-hot if needed
@@ -187,24 +200,37 @@ class Model:
                 else:
                     y_true = y
                 
+                # Mixed precision: convert to FP16 for forward pass
+                if self.mixed_precision:
+                    X = X.astype(np.float16)
+                
                 # Forward pass
                 logits: np.ndarray = self.forward(X, training=True)
+                
+                # Convert back to FP32 for loss computation
+                if self.mixed_precision:
+                    logits = logits.astype(np.float32)
+                
                 loss_val: float = self.loss.forward(logits, y_true)
                 
-                # Backward pass
+                # Backward pass (always in FP32)
                 grad: np.ndarray = self.loss.backward()
                 self.backward(grad)
                 self.optimizer.step(self._params_and_grads())
                 
-                # Track metrics
+                # Track metrics (reduce CPU<->GPU transfers)
+                batch_count += 1
                 losses.append(float(backend.to_numpy(loss_val)))
-                if y.ndim == 1:
+                
+                # Compute accuracy less frequently (every 10 batches)
+                if y.ndim == 1 and batch_count % 10 == 0:
                     xp = backend.get_array_module()
                     preds: np.ndarray = xp.argmax(logits, axis=1)
                     acc: float = float(backend.to_numpy(xp.mean(preds == y)))  
                     accs.append(acc)
-                
-                pbar.set_postfix(loss=np.mean(losses), acc=np.mean(accs) if accs else 0.0)
+                    pbar.set_postfix(loss=np.mean(losses[-10:]), acc=np.mean(accs[-10:]) if accs else 0.0)
+                elif batch_count % 10 == 0:
+                    pbar.set_postfix(loss=np.mean(losses[-10:]))
 
             # Validation
             val_acc: Optional[float] = None

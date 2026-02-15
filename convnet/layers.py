@@ -215,9 +215,10 @@ class Dropout(Layer):
 class Conv2D(Layer):
     """2D convolution layer with JIT-compiled im2col + GEMM operations.
 
-    Uses JAX for automatic JIT compilation and GPU/TPU acceleration.
+    Uses JAX for automatic JIT compilation and GPU/TPU acceleration,
+    or SciPy FFT-based convolutions for CPU optimization.
     """
-    def __init__(self, filters: int, kernel_size: Tuple[int, int] = (3,3), stride: int = 1, padding: str = 'same', use_bias: bool = True, rng: Optional[np.random.Generator] = None) -> None:
+    def __init__(self, filters: int, kernel_size: Tuple[int, int] = (3,3), stride: int = 1, padding: str = 'same', use_bias: bool = True, rng: Optional[np.random.Generator] = None, use_fft: bool = True) -> None:
         super().__init__()
         if filters <= 0:
             raise ValueError(f"filters must be positive, got {filters}")
@@ -235,6 +236,7 @@ class Conv2D(Layer):
         self.stride: int = stride
         self.padding: str = padding
         self.use_bias: bool = use_bias
+        self.use_fft: bool = use_fft
         self.rng: np.random.Generator = rng or np.random.default_rng()
         self.last_x: Optional[np.ndarray] = None
         self.cache: Optional[Tuple] = None
@@ -293,12 +295,36 @@ class Conv2D(Layer):
         return cols, out_h, out_w, (pt, pb, pl, pr), x_p.shape
 
     def forward(self, x: np.ndarray, training: bool = False) -> np.ndarray:
-        """Forward pass: convolution as matrix multiplication."""
+        """Forward pass: convolution as matrix multiplication or FFT."""
         x = backend.asarray(x)
         self.last_x = x
         xp = backend.get_array_module()
+        kh, kw = self.kernel_size
         
-        # Convert to column format
+        # Try FFT convolution for 3x3+ kernels with stride=1 on SciPy backend
+        if (self.use_fft and self.stride == 1 and kh >= 3 and kw >= 3 and 
+            backend.is_scipy_available() and hasattr(backend, 'conv2d_fft')):
+            
+            # Apply padding first
+            if self.padding == 'same':
+                batch, h, w, c = x.shape
+                pt, pb, pl, pr = self._compute_padding(h, w)
+                if pt > 0 or pb > 0 or pl > 0 or pr > 0:
+                    x_padded = np.zeros((batch, h + pt + pb, w + pl + pr, c), dtype=x.dtype)
+                    x_padded[:, pt:pt+h, pl:pl+w, :] = x
+                    x = x_padded
+            
+            # Try FFT-based convolution
+            fft_result = backend.conv2d_fft(x, self.params['W'], self.stride)
+            if fft_result is not None:
+                out = fft_result
+                if self.use_bias:
+                    out = out + self.params['b']
+                # Cache for backward (FFT doesn't use im2col)
+                self.cache = ('fft', None, None, None, None, x.shape)
+                return out
+        
+        # Fall back to im2col + GEMM (standard path)
         cols, out_h, out_w, pads, padded_shape = self._im2col(x)
         
         # Reshape weights and compute convolution
@@ -313,12 +339,39 @@ class Conv2D(Layer):
         out = xp.reshape(out, (batch, out_h, out_w, self.filters))
         
         # Cache for backward pass
-        self.cache = (cols, W_col, out_h, out_w, pads, padded_shape)
+        self.cache = ('im2col', cols, W_col, out_h, out_w, pads, padded_shape)
         return out
 
     def backward(self, grad: np.ndarray) -> np.ndarray:
         """Backward pass: compute gradients and perform col2im."""
-        cols, W_col, out_h, out_w, pads, padded_shape = self.cache
+        cache_type = self.cache[0] if isinstance(self.cache[0], str) else 'im2col'
+        
+        if cache_type == 'fft':
+            # FFT path: fall back to im2col for backward (still correct, just not FFT)
+            _, _, _, _, _, padded_shape = self.cache
+            cols, out_h, out_w, pads, _ = self._im2col(self.last_x)
+            kh, kw = self.kernel_size
+            batch = self.last_x.shape[0]
+            c = self.last_x.shape[3]
+            xp = backend.get_array_module()
+            
+            W_col = xp.reshape(self.params['W'], (-1, self.filters))
+            grad_2d = xp.reshape(grad, (batch * out_h * out_w, self.filters))
+            
+            dW_col = cols.T @ grad_2d
+            self.grads['W'] = xp.reshape(dW_col, (kh, kw, c, self.filters))
+            
+            if self.use_bias:
+                self.grads['b'] = xp.einsum('ij->j', grad_2d)
+            
+            dcols = grad_2d @ W_col.T
+            pt, pb, pl, pr = pads
+            pad = pt
+            dx = backend.col2im_backward(dcols, self.last_x.shape, kh, kw, self.stride, pad)
+            return dx
+        
+        # Standard im2col path
+        _, cols, W_col, out_h, out_w, pads, padded_shape = self.cache
         kh, kw = self.kernel_size
         batch: int = self.last_x.shape[0]
         c = self.last_x.shape[3]

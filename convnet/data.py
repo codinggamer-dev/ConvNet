@@ -1,16 +1,23 @@
-"""Data loading utilities (IDX gzip like MNIST) and simple batching with threads."""
+"""Data loading utilities for IDX format datasets with efficient batching.
+
+Provides functions to load IDX gzip files (MNIST, EMNIST) and a Dataset class
+with threaded batch loading for optimal training performance.
+"""
 from __future__ import annotations
 import gzip
 import numpy as np
+import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Iterator, Optional, Callable
-import os
+from queue import Queue
+from threading import Thread
 from . import jax_backend as backend
 
-# IDX format parsing (MNIST)
 
 def _read_idx_gz(path: str) -> np.ndarray:
-    """Read IDX format gzip file (MNIST format).
+    """Read IDX format gzip file.
+    
+    Supports the IDX file format used by MNIST, EMNIST, and similar datasets.
     
     Args:
         path: Path to .gz file
@@ -52,9 +59,14 @@ def _read_idx_gz(path: str) -> np.ndarray:
         raise ValueError(f"Error reading {path}: {e}")
 
 class Dataset:
-    """Simple dataset container with efficient batching and preprocessing.
+    """Dataset container with efficient batching and preprocessing.
     
-    Provides threaded data loading for better performance during training.
+    Provides threaded data loading and optional preprocessing for optimal
+    training performance with automatic device transfer (CPU/GPU).
+    
+    Attributes:
+        images: Image data as numpy array
+        labels: Label data as numpy array
     """
     
     def __init__(self, images: np.ndarray, labels: np.ndarray) -> None:
@@ -68,21 +80,29 @@ class Dataset:
     def __len__(self) -> int:
         return self.images.shape[0]
 
-    def batches(self, batch_size: int, shuffle: bool = True, 
-                preprocess: Optional[Callable[[np.ndarray], np.ndarray]] = None, 
-                num_threads: Optional[int] = None, 
-                use_cuda: bool = True) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
-        """Generate batches of data with optional preprocessing and CUDA transfer.
+    def batches(
+        self,
+        batch_size: int,
+        shuffle: bool = True,
+        preprocess: Optional[Callable[[np.ndarray], np.ndarray]] = None,
+        num_threads: Optional[int] = None,
+        use_cuda: bool = True,
+        prefetch: int = 2,
+        cache: bool = False
+    ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+        """Generate batches with async prefetching for maximum throughput.
         
         Args:
             batch_size: Number of samples per batch
             shuffle: Whether to shuffle data before batching
-            preprocess: Optional preprocessing function
-            num_threads: Number of threads for data loading
-            use_cuda: Whether to transfer to GPU if available
+            preprocess: Optional preprocessing function applied to images
+            num_threads: Number of worker threads (default: min(8, cpu_count))
+            use_cuda: Whether to transfer batches to GPU if available
+            prefetch: Number of batches to prefetch (default: 2 for double buffering)
+            cache: Cache preprocessed batches in memory (uses more RAM but faster)
             
         Yields:
-            Tuples of (batch_images, batch_labels)
+            Tuples of (batch_images, batch_labels) on appropriate device
         """
         idx: np.ndarray = np.arange(len(self))
         if shuffle:
@@ -94,60 +114,124 @@ class Dataset:
         if num_threads is None:
             num_threads = min(8, os.cpu_count() or 2)
         
+        # Cache for preprocessed batches
+        batch_cache = {} if cache else None
+        
         def load_batch(start: int) -> Tuple[np.ndarray, np.ndarray]:
-            """Load and preprocess a single batch."""
+            """Load, normalize, and preprocess a single batch."""
+            if batch_cache is not None and start in batch_cache:
+                return batch_cache[start]
+            
             end: int = min(start + batch_size, n)
             X: np.ndarray = images[start:end].astype(np.float32) / 255.0
             if preprocess is not None:
                 X = preprocess(X)
             y: np.ndarray = labels[start:end]
-            # Move to GPU if requested and available
+            
             if use_cuda and backend.USE_JAX:
                 X = backend.asarray(X)
                 y = backend.asarray(y)
+            
+            if batch_cache is not None:
+                batch_cache[start] = (X, y)
             return X, y
         
-        # Use thread pool for prefetching batches
-        with ThreadPoolExecutor(max_workers=num_threads) as ex:
-            futures = []
-            for start in range(0, n, batch_size):
-                futures.append(ex.submit(load_batch, start))
-                # Yield when we have enough prefetched batches
-                if len(futures) >= num_threads:
-                    X, y = futures.pop(0).result()
+        # Async prefetching with double buffering
+        if prefetch > 0:
+            queue: Queue = Queue(maxsize=prefetch)
+            
+            def producer():
+                with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                    for start in range(0, n, batch_size):
+                        future = executor.submit(load_batch, start)
+                        queue.put(future)
+                queue.put(None)  # Sentinel
+            
+            thread = Thread(target=producer, daemon=True)
+            thread.start()
+            
+            while True:
+                item = queue.get()
+                if item is None:
+                    break
+                yield item.result()
+        else:
+            # Sequential loading (no prefetch)
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                futures = []
+                for start in range(0, n, batch_size):
+                    futures.append(executor.submit(load_batch, start))
+                    
+                    if len(futures) >= num_threads:
+                        X, y = futures.pop(0).result()
+                        yield X, y
+                
+                for future in futures:
+                    X, y = future.result()
                     yield X, y
-            # Yield remaining batches
-            for fut in futures:
-                X, y = fut.result()
-                yield X, y
+
+
+def load_dataset_gz(
+    folder: str,
+    train_images_file: str = 'train-images-idx3-ubyte.gz',
+    train_labels_file: str = 'train-labels-idx1-ubyte.gz',
+    test_images_file: str = 't10k-images-idx3-ubyte.gz',
+    test_labels_file: str = 't10k-labels-idx1-ubyte.gz',
+    add_channel_dim: bool = True
+) -> Tuple[Dataset, Dataset]:
+    """Load dataset from gzipped IDX files.
+    
+    Universal loader for MNIST, EMNIST, and other IDX format datasets.
+    
+    Args:
+        folder: Directory containing dataset .gz files
+        train_images_file: Filename of training images .gz file
+        train_labels_file: Filename of training labels .gz file
+        test_images_file: Filename of test images .gz file
+        test_labels_file: Filename of test labels .gz file
+        add_channel_dim: Whether to add channel dimension (N, H, W) -> (N, H, W, 1)
+        
+    Returns:
+        Tuple of (train_dataset, test_dataset)
+        
+    Raises:
+        FileNotFoundError: If dataset files are missing
+        ValueError: If files are corrupted or invalid
+    """
+    if not os.path.exists(folder):
+        raise FileNotFoundError(
+            f"Dataset folder not found: {folder}\n"
+            f"Please create the folder and download the dataset."
+        )
+    
+    train_images = _read_idx_gz(os.path.join(folder, train_images_file))
+    train_labels = _read_idx_gz(os.path.join(folder, train_labels_file))
+    test_images = _read_idx_gz(os.path.join(folder, test_images_file))
+    test_labels = _read_idx_gz(os.path.join(folder, test_labels_file))
+    
+    if add_channel_dim:
+        train_images = train_images[..., None]
+        test_images = test_images[..., None]
+    
+    return Dataset(train_images, train_labels), Dataset(test_images, test_labels)
 
 
 def load_mnist_gz(folder: str) -> Tuple[Dataset, Dataset]:
     """Load MNIST dataset from gzipped IDX files.
+    
+    Note: Consider using load_dataset_gz() for greater flexibility.
+    This function maintained for backward compatibility.
     
     Args:
         folder: Directory containing MNIST .gz files
         
     Returns:
         Tuple of (train_dataset, test_dataset)
-        
-    Raises:
-        FileNotFoundError: If MNIST files are missing
-        ValueError: If files are corrupted or invalid
     """
-    if not os.path.exists(folder):
-        raise FileNotFoundError(
-            f"Dataset folder not found: {folder}\n"
-            f"Please create the folder and download MNIST dataset."
-        )
-    
-    train_images = _read_idx_gz(os.path.join(folder, 'train-images-idx3-ubyte.gz'))
-    train_labels = _read_idx_gz(os.path.join(folder, 'train-labels-idx1-ubyte.gz'))
-    test_images = _read_idx_gz(os.path.join(folder, 't10k-images-idx3-ubyte.gz'))
-    test_labels = _read_idx_gz(os.path.join(folder, 't10k-labels-idx1-ubyte.gz'))
-    
-    # Reshape to (N, H, W, C) format
-    train_images = train_images[..., None]
-    test_images = test_images[..., None]
-    
-    return Dataset(train_images, train_labels), Dataset(test_images, test_labels)
+    return load_dataset_gz(
+        folder,
+        train_images_file='train-images-idx3-ubyte.gz',
+        train_labels_file='train-labels-idx1-ubyte.gz',
+        test_images_file='t10k-images-idx3-ubyte.gz',
+        test_labels_file='t10k-labels-idx1-ubyte.gz'
+    )

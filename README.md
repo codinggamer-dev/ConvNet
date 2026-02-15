@@ -2,14 +2,14 @@
 
 [![PyPI](https://img.shields.io/badge/PyPI-convnet-blue.svg)](https://pypi.org/project/convnet/)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Numba](https://img.shields.io/badge/Numba-CPU%20JIT-red.svg)](https://numba.pydata.org/)
+[![SciPy](https://img.shields.io/badge/SciPy-CPU%20Optimized-red.svg)](https://scipy.org/)
 [![JAX](https://img.shields.io/badge/JAX-GPU%2FTPU-green.svg)](https://jax.readthedocs.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 [![Status](https://img.shields.io/badge/Status-Educational-orange.svg)]()
 
-> **A high-performance, educational CNN framework: Numba for CPU, JAX for GPU/TPU**
+> **A high-performance, educational CNN framework: SciPy optimization for CPU, JAX for GPU/TPU**
 
-This project was created as a school assignment with the goal of understanding deep learning from the ground up. It's designed to be **easy to understand** and **learn from**, implementing a complete CNN framework with **Numba acceleration** for fast CPU training and optional **JAX acceleration** for GPU/TPU. The framework uses simple, readable code while delivering excellent performance.
+This project was created as a school assignment with the goal of understanding deep learning from the ground up. It's designed to be **easy to understand** and **learn from**, implementing a complete CNN framework with **SciPy optimization** for efficient CPU training and optional **JAX acceleration** for GPU/TPU. The framework uses simple, readable code while delivering excellent performance.
 
 ---
 
@@ -25,9 +25,9 @@ This project was created as a school assignment with the goal of understanding d
 - 🔄 **Data Augmentation Ready** - Thread-pooled data loading
 
 ### Performance Options
-- 🚀 **Numba CPU Acceleration** - Parallel JIT-compiled operations (15+ it/s)
+- 🚀 **SciPy CPU Optimization** - BLAS-based linear algebra and optimized operations
 - ⚡ **JAX GPU/TPU Support** - XLA compilation for maximum throughput
-- 📦 **OpenBLAS Integration** - SIMD-optimized matrix operations
+- 📦 **NumPy Fallback** - Pure NumPy when SciPy unavailable
 
 ### Developer Experience
 - 📚 **Clean Code** - Well-documented and easy to follow
@@ -44,7 +44,7 @@ This project was created as a school assignment with the goal of understanding d
 **Install from PyPI (Recommended):**
 
 ```bash
-# Install base package (includes Numba for fast CPU)
+# Install base package (includes SciPy for CPU optimization)
 pip install convnet
 
 # For GPU/TPU support, add JAX:
@@ -72,12 +72,12 @@ pip install jax[cuda12]  # For NVIDIA GPU
 
 | Backend | MNIST Training Speed | Best For |
 |---------|---------------------|----------|
-| **Numba (CPU)** | **~16 it/s** (model only) | **Fast CPU training** |
-| Pure NumPy | ~6-8 it/s | Fallback, compatibility |
+| **SciPy+NumPy (CPU)** | **~12-15 it/s** | **CPU training, educational** |
+| Pure NumPy | ~8-10 it/s | Fallback, compatibility |
 | JAX (CPU) | ~10-12 it/s | Development |
 | JAX (GPU) | ~50+ it/s | Production training |
 
-> **Note:** Numba uses all available CPU cores with parallel JIT compilation. Actual training speed is ~10-12 it/s due to loss/optimizer/data loading overhead.
+> **Note:** SciPy uses optimized BLAS routines for linear algebra. Actual training speed depends on CPU and BLAS library.
 > For maximum performance, ensure you have a modern CPU with AVX2 support.
 
 ### Your First Neural Network in 10 Lines
@@ -107,10 +107,20 @@ history = model.fit(train_dataset, epochs=10, batch_size=32, num_classes=10)
 ```python
 import numpy as np
 from convnet import Model, Conv2D, Activation, MaxPool2D, Flatten, Dense, Dropout, Dataset
-from convnet.data import load_mnist_gz
+from convnet.data import load_mnist_gz  # or load_dataset_gz for other datasets
 
 # Load MNIST data
 train_data, test_data = load_mnist_gz('mnist_dataset')
+
+# For EMNIST or other IDX format datasets, use load_dataset_gz:
+# from convnet.data import load_dataset_gz
+# train_data, test_data = load_dataset_gz(
+#     'emnist_dataset',
+#     train_images_file='emnist-letters-train-images-idx3-ubyte.gz',
+#     train_labels_file='emnist-letters-train-labels-idx1-ubyte.gz',
+#     test_images_file='emnist-letters-test-images-idx3-ubyte.gz',
+#     test_labels_file='emnist-letters-test-labels-idx1-ubyte.gz'
+# )
 
 # Build the model
 model = Model([
@@ -120,7 +130,7 @@ model = Model([
     MaxPool2D((2, 2)),
     Flatten(),
     Dense(64), Activation('relu'), Dropout(0.2),
-    Dense(10)
+    Dense(10)  # or 26 for EMNIST Letters
 ])
 
 # Compile and train

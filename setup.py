@@ -12,10 +12,10 @@ license_text = "MIT" if license_file.exists() else ""
 
 setup(
     name="convnet",
-    version="2.2.0",
+    version="2.4.0",
     author="codinggamer-dev",
     author_email="ege.tba1940@gmail.com",
-    description="A high-performance CNN framework: Numba for CPU, JAX for GPU/TPU",
+    description="A high-performance CNN framework: SciPy for CPU optimization, JAX for GPU/TPU",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/codinggamer-dev/ConvNet-NumPy",
@@ -41,9 +41,10 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "numpy>=1.20.0",
-        "numba>=0.56.0",
+        "scipy>=1.7.0",
         "tqdm>=4.60.0",
         "h5py>=3.0.0",
+        "numexpr>=2.8.0",
     ],
     extras_require={
         "jax": ["jax>=0.4.0", "jaxlib>=0.4.0"],
